@@ -25,10 +25,6 @@ class DatabaseConfig(BaseModel):
             port=int(os.getenv("DB_PORT", 5432)),
         )
 
-    def get_database_url(self) -> str:
-        """Constructs and returns the database connection URL."""
-        return f"postgresql://{self.user}:{self.password}@{self.hostname}:{self.port}/{self.name}"
-
 
 class NewsCrawlerConfig(BaseModel):
     base_url: str = Field(..., env="NEWS_CRAWLER_BASE_URL")

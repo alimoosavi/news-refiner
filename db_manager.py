@@ -20,6 +20,7 @@ class DBManager:
                 id SERIAL PRIMARY KEY,
                 source VARCHAR(255),
                 timestamp TIMESTAMP,
+                title TEXT,
                 body TEXT,
                 has_processed BOOLEAN DEFAULT FALSE
             );
@@ -74,11 +75,11 @@ class DBManager:
         if not news_list:
             return  # No data to insert
 
-        values = [(news.source, news.timestamp, news.body) for news in news_list]
+        values = [(news.source, news.timestamp, news.title, news.body) for news in news_list]
 
         query = """
-            INSERT INTO short_news (source, timestamp, body)
-            VALUES (%s, %s, %s);
+            INSERT INTO short_news (source, timestamp, title, body)
+            VALUES (%s, %s, %s, %s);
         """
 
         with self.conn.cursor() as cursor:
@@ -93,15 +94,15 @@ class DBManager:
             return  # Nothing to process
 
         insert_query = """
-            INSERT INTO short_news (source, timestamp, body)
-            VALUES (%s, %s, %s);
+            INSERT INTO short_news (source, timestamp, title, body)
+            VALUES (%s, %s, %s, %s);
         """
 
         update_query = f"""
             UPDATE raw_news SET has_processed = TRUE WHERE id IN ({','.join(['%s'] * len(raw_news_ids))});
         """
 
-        values = [(news.source, news.timestamp, news.body) for news in news_list]
+        values = [(news.source, news.timestamp, news.title, news.body) for news in news_list]
 
         try:
             with self.conn.cursor() as cursor:

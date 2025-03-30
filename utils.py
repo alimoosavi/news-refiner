@@ -96,9 +96,11 @@ def extract_link(content, source=None):
     return []
 
 
-def extract_title(source: str, news_content: str) -> Optional[str]:
-    if source == 'JAHAN_FOURI':
+def extract_title_and_body(source: str, news_content: str):
+    if source in {'JAHAN_FOURI', 'ISNA'}:
         match = re.search(r'\*\*(.*?)\*\*', news_content)
         if match:
-            return match.group(1)  # Extracted title without the **
-        return None  # Return None if no match is found
+            title = match.group(1)  # Extracted title without the **
+            body = news_content.replace(match.group(0), '').strip()  # Remove title from content
+            return title, body
+    return None  # Return None if no title is found

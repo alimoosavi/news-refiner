@@ -1,6 +1,7 @@
 from datetime import datetime
-
-from pydantic import BaseModel
+import secrets
+import string
+from pydantic import BaseModel, Field
 
 
 class RawNews(BaseModel):
@@ -15,9 +16,15 @@ class RawNews(BaseModel):
         return news_dict
 
 
+def generate_random_id(length: int = 20) -> str:
+    return ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(length))
+
+
 class ShortNews(BaseModel):
+    id_: str = Field(default_factory=generate_random_id)
     source: str
     timestamp: datetime
+    title: str
     body: str
 
 
