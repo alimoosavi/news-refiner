@@ -3,3 +3,9 @@ venv
 
 __pycache__
 .idea
+
+celerybeat-schedule.db
+
+collector_session.session
+
+last-published-data.json
