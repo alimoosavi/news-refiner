@@ -6,57 +6,45 @@ from config import config
 from db_manager import DBManager
 from news_crawler_client import NewsCrawlerClient
 from schema import ShortNews
-from utils import preprocess_persian_document, extract_link, extract_title
+from utils import preprocess_persian_document, extract_link, extract_title_and_body
 
 NEWS_SOURCES = ['IRNA', 'ISNA', 'FARS', 'JAHAN_FOURI']
 LINKS_BATCH_SIZE = 40
 
 
-async def process_news(db_manager: DBManager, news_crawler_client: NewsCrawlerClient, logger: logging.Logger):
+async def process_news(db_manager: DBManager,
+                       news_crawler_client: NewsCrawlerClient,
+                       logger: logging.Logger):
     """Processes unprocessed news by extracting links, fetching new content, and storing results."""
-    short_news_mapping = defaultdict(dict)
+    # Todo: handle short news ( which did not detect any link for them)
     news_links_mapping = defaultdict(dict)
+    for source in ['IRNA']:
+        unprocessed_news = db_manager.get_raw_news_by_source_and_status(source=source,
+                                                                        has_processed=False)
+        # print(len(unprocessed_news))
+        for item in unprocessed_news:
+            links = extract_link(content=item.content, source=item.source)
+            print(links)
 
-    # unprocessed_news = db_manager.get_unprocessed_news()
-    non_title_news = []
-    for item in db_manager.get_raw_news_by_source_and_status(source='JAHAN_FOURI', has_processed=True):
-        title = extract_title('JAHAN_FOURI', item.content)
-        if title is None:
-            non_title_news.append(item.content)
-        print('title', title, '\n', item.content, '\n\n', '-' * 10, '\n\n')
 
-    print('\n\n', 'non_title_news  ', non_title_news)
-    # if not unprocessed_news:
-    #     logger.info("No unprocessed news found.")
-    #     return
+    # for source in ['IRNA']:
+    #     short_news = []
+    #     for item in db_manager.get_raw_news_by_source_and_status(source=source, has_processed=True):
+    #         entry = extract_title_and_body(source, item.content)
+    #         if entry is None:
+    #             continue
     #
-    # for item in unprocessed_news:
-    #     links = extract_link(content=item.content,
-    #                          source=item.source)
-    #     if len(links) > 0:
-    #         news_links_mapping[item.source] = {**news_links_mapping[item.source],
-    #                                            item.id: links}
-    #     else:
-    #         short_news_mapping[item.source] = {**short_news_mapping[item.source], item.id: ShortNews(
-    #             source=item.source,
-    #             body=preprocess_persian_document(item.content),
-    #             timestamp=item.published_date,
-    #         )}
+    #         title, body = entry
+    #         if title is not None and body is not None:
+    #             processed_body = preprocess_persian_document(body)
+    #             if len(processed_body) > 0:
+    #                 short_news.append(ShortNews(source='JAHAN_FOURI',
+    #                                             title=title,
+    #                                             body=preprocess_persian_document(body),
+    #                                             timestamp=item.published_date))
     #
-    # # Handling short-news
-    # short_news_flat = [
-    #     short_news
-    #     for short_news_dict in short_news_mapping.values()
-    #     for short_news in short_news_dict.values()
-    # ]
-    #
-    # raw_news_ids = [
-    #     news_id
-    #     for short_news_dict in short_news_mapping.values()
-    #     for news_id in short_news_dict.keys()
-    # ]
-    #
-    # db_manager.process_and_insert_news(news_list=short_news_flat, raw_news_ids=raw_news_ids)
+    #     for item in short_news:
+    #         print(item, '\n\n *** \n\n')
 
 
 async def main():

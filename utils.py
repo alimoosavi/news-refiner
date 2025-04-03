@@ -61,6 +61,88 @@ def preprocess_persian_document(text):
     return text
 
 
+def chunk_text(text: str, max_tokens: int = 512, overlap_percent: float = 0.1) -> list[str]:
+    """
+    Split Persian text into context-aware chunks with token limits
+
+    Args:
+        text: Preprocessed Persian text
+        max_tokens: Maximum tokens per chunk (default: 512 for ada-002)
+        overlap_percent: Percentage of overlap between chunks (0-1)
+
+    Returns:
+        List of text chunks maintaining sentence boundaries
+    """
+    # Split on sentence boundaries (Persian punctuation)
+    sentences = re.split(r'(?<=[.!؟]) +', text)
+    chunks = []
+    current_chunk = []
+    current_length = 0
+    overlap_tokens = int(max_tokens * overlap_percent)
+
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+
+        sentence_tokens = count_tokens(sentence)
+
+        # Handle single sentences longer than max_tokens
+        if sentence_tokens > max_tokens:
+            if current_chunk:
+                chunks.append(' '.join(current_chunk))
+                current_chunk = []
+                current_length = 0
+
+            # Split long sentence into smaller chunks
+            words = sentence.split()
+            chunk_words = []
+            chunk_token_count = 0
+
+            for word in words:
+                word_tokens = count_tokens(word)
+                if chunk_token_count + word_tokens > max_tokens:
+                    chunks.append(' '.join(chunk_words))
+                    chunk_words = chunk_words[-int(len(chunk_words) * overlap_percent):]
+                    chunk_token_count = count_tokens(' '.join(chunk_words))
+
+                chunk_words.append(word)
+                chunk_token_count += word_tokens
+
+            if chunk_words:
+                chunks.append(' '.join(chunk_words))
+            continue
+
+        # Normal chunking logic
+        if current_length + sentence_tokens > max_tokens:
+            chunks.append(' '.join(current_chunk))
+
+            # Add overlap
+            if overlap_tokens > 0:
+                overlap = []
+                overlap_length = 0
+                for sent in reversed(current_chunk):
+                    sent_tokens = count_tokens(sent)
+                    if overlap_length + sent_tokens > overlap_tokens:
+                        break
+                    overlap.insert(0, sent)
+                    overlap_length += sent_tokens
+                current_chunk = overlap
+                current_length = overlap_length
+            else:
+                current_chunk = []
+                current_length = 0
+
+        current_chunk.append(sentence)
+        current_length += sentence_tokens
+
+    # Add remaining chunk
+    if current_chunk:
+        chunks.append(' '.join(current_chunk))
+
+    return chunks
+
+
 def is_irna_news_url(url: str) -> bool:
     """Check if the given URL follows the pattern 'http://www.irna.ir/<random_string>'."""
     pattern = r"^http://www\.irna\.ir/[a-zA-Z0-9]+$"

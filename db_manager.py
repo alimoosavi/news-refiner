@@ -1,131 +1,145 @@
-from typing import List
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, func
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.pool import QueuePool
+from contextlib import contextmanager
+from typing import List, Optional
+from datetime import datetime
 
-import mysql.connector
+Base = declarative_base()
 
-from schema import RawNews, ShortNews
+class RawNews(Base):
+    """Raw news articles table schema"""
+    __tablename__ = 'raw_news'
+
+    id = Column(Integer, primary_key=True)
+    source = Column(String(255), nullable=False)
+    title = Column(Text, nullable=False)
+    body = Column(Text, nullable=False)
+    url = Column(String(512), unique=True, nullable=False)
+    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
+    has_processed = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class DBManager:
-    def __init__(self, db_name, user, password, host, port):
-        self.conn = mysql.connector.connect(
-            database=db_name, user=user, password=password, host=host, port=port
+    def __init__(
+        self,
+        user: str,
+        password: str,
+        host: str,
+        port: int,
+        database: str,
+        connector: str = "mysqlconnector",
+        pool_size: int = 10,
+        max_overflow: int = 20
+    ):
+        """
+        Initialize database connection manager
+
+        Args:
+            user: Database username
+            password: Database password
+            host: Database host
+            port: Database port
+            database: Database name
+            connector: MySQL connector type
+            pool_size: Connection pool size
+            max_overflow: Maximum number of connections to overflow
+        """
+        self.connection_string = (
+            f"mysql+{connector}://{user}:{password}@{host}:{port}/{database}"
         )
-        self.create_tables()  # Ensure tables exist on initialization
+        
+        self.engine = create_engine(
+            self.connection_string,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            poolclass=QueuePool
+        )
+        
+        self.SessionLocal = sessionmaker(
+            autocommit=False,
+            autoflush=False,
+            bind=self.engine
+        )
 
-    def create_tables(self):
-        """Create `short_news`, `long_news`, and `news_link` tables if they do not exist."""
-        queries = [
-            """
-            CREATE TABLE IF NOT EXISTS short_news (
-                id SERIAL PRIMARY KEY,
-                source VARCHAR(255),
-                timestamp TIMESTAMP,
-                title TEXT,
-                body TEXT,
-                has_processed BOOLEAN DEFAULT FALSE
-            );
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS long_news (
-                id SERIAL PRIMARY KEY,
-                source VARCHAR(255),
-                timestamp TIMESTAMP,
-                news_link TEXT UNIQUE,
-                title TEXT,
-                body TEXT,
-                has_processed BOOLEAN DEFAULT FALSE
-            );
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS news_link (
-                id SERIAL PRIMARY KEY,
-                source VARCHAR(255),
-                timestamp TIMESTAMP,
-                link VARCHAR(255) UNIQUE,
-                has_processed BOOLEAN DEFAULT FALSE
-            );
-            """
-        ]
-        with self.conn.cursor() as cursor:
-            for query in queries:
-                cursor.execute(query)
-            self.conn.commit()
-
-    def get_unprocessed_news(self):
-        """Retrieve all unprocessed news articles."""
-        with self.conn.cursor(dictionary=True) as cursor:
-            cursor.execute("SELECT * FROM raw_news WHERE has_processed = FALSE;")
-            data_list = cursor.fetchall()
-            return [RawNews(**item) for item in data_list]
-
-    def mark_news_as_processed(self, news_ids: List[int]):
-        """Mark multiple news articles as processed."""
-        if not news_ids:
-            return  # No IDs provided, nothing to update
-
-        with self.conn.cursor() as cursor:
-            format_strings = ','.join(['%s'] * len(news_ids))
-            cursor.execute(f"""
-                UPDATE raw_news SET has_processed = TRUE WHERE id IN ({format_strings});
-            """, tuple(news_ids))
-            self.conn.commit()
-
-    def bulk_insert_short_news(self, news_list: List[ShortNews]):
-        """Insert multiple ShortNews records in bulk into the database."""
-        if not news_list:
-            return  # No data to insert
-
-        values = [(news.source, news.timestamp, news.title, news.body) for news in news_list]
-
-        query = """
-            INSERT INTO short_news (source, timestamp, title, body)
-            VALUES (%s, %s, %s, %s);
+    @contextmanager
+    def get_session(self) -> Session:
         """
-
-        with self.conn.cursor() as cursor:
-            cursor.executemany(query, values)
-            self.conn.commit()
-
-    def process_and_insert_news(self, news_list: List[ShortNews], raw_news_ids: List[int]):
+        Get a database session with automatic cleanup
+        
+        Yields:
+            SQLAlchemy Session object
         """
-        Atomically insert multiple ShortNews records and mark corresponding raw_news as processed.
-        """
-        if not news_list or not raw_news_ids:
-            return  # Nothing to process
-
-        insert_query = """
-            INSERT INTO short_news (source, timestamp, title, body)
-            VALUES (%s, %s, %s, %s);
-        """
-
-        update_query = f"""
-            UPDATE raw_news SET has_processed = TRUE WHERE id IN ({','.join(['%s'] * len(raw_news_ids))});
-        """
-
-        values = [(news.source, news.timestamp, news.title, news.body) for news in news_list]
-
+        session = self.SessionLocal()
         try:
-            with self.conn.cursor() as cursor:
-                # Bulk insert short news
-                cursor.executemany(insert_query, values)
-                # Mark news as processed
-                cursor.execute(update_query, tuple(raw_news_ids))
-                # Commit transaction
-                self.conn.commit()
-        except mysql.connector.Error as e:
-            self.conn.rollback()  # Rollback if any issue occurs
-            raise e  # Re-raise the exception for proper error handling
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
-    def get_raw_news_by_source_and_status(self, source: str, has_processed: bool) -> List[RawNews]:
-        """Retrieve RawNews articles filtered by source and processed status."""
-        with self.conn.cursor(dictionary=True) as cursor:
-            cursor.execute("""
-                SELECT * FROM raw_news
-                WHERE source = %s AND has_processed = %s;
-            """, (source, has_processed))
-            data_list = cursor.fetchall()
-            return [RawNews(**item) for item in data_list]
 
-    def close(self):
-        """Close the database connection."""
-        self.conn.close()
+    def mark_news_as_processed(self, news_ids: List[int]) -> None:
+        """
+        Mark multiple news articles as processed
+        
+        Args:
+            news_ids: List of news article IDs to mark as processed
+        
+        Raises:
+            SQLAlchemyError: If database update fails
+        """
+        if not news_ids:
+            return
+
+        with self.get_session() as session:
+            try:
+                # Update with pessimistic locking
+                session.query(RawNews)\
+                    .filter(RawNews.id.in_(news_ids))\
+                    .with_for_update()\
+                    .update(
+                        {
+                            RawNews.has_processed: True,
+                            RawNews.updated_at: datetime.utcnow()
+                        },
+                        synchronize_session=False
+                    )
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                raise RuntimeError(f"Failed to mark news as processed: {str(e)}") from e
+
+    def create_tables(self) -> None:
+        """Create all database tables if they don't exist"""
+        Base.metadata.create_all(self.engine)
+
+    def get_unprocessed_count(self) -> int:
+        """Get count of unprocessed news articles"""
+        with self.get_session() as session:
+            return session.query(func.count(RawNews.id))\
+                .filter_by(has_processed=False)\
+                .scalar()
+
+    def get_unprocessed_news(self, limit: int = 100) -> List[RawNews]:
+        """
+        Retrieve unprocessed news articles with limit
+        
+        Args:
+            limit: Maximum number of articles to retrieve
+
+        Returns:
+            List of unprocessed RawNews objects
+        """
+        with self.get_session() as session:
+            return session.query(RawNews)\
+                .filter_by(has_processed=False)\
+                .order_by(RawNews.timestamp.desc())\
+                .limit(limit)\
+                .with_for_update()\
+                .all()
