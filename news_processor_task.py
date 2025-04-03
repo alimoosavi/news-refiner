@@ -1,12 +1,13 @@
+from datetime import timedelta
+
 import numpy as np
 from celery import Celery
-from datetime import timedelta
-from typing import List, Dict, Any
-from db_manager import DBManager, RawNews
-from utils import preprocess_persian_document, chunk_text, count_tokens
-from openai_interface import OpenAIInterface
-from faiss_manager import FAISSManager
+import logging
 from config import config
+from db_manager import DBManager, RawNews
+from faiss_manager import FAISSManager
+from openai_interface import OpenAIInterface
+from utils import count_tokens
 
 # Celery application setup
 app = Celery('news_processor', broker=config.celery.broker_url)
@@ -40,6 +41,7 @@ db = DBManager(
     max_overflow=config.database.max_overflow
 )
 
+
 @app.task(bind=True, max_retries=3)
 def process_news_batch(self, batch_size: int = None):
     """Process a batch of unprocessed news articles with retry logic"""
@@ -47,40 +49,32 @@ def process_news_batch(self, batch_size: int = None):
         batch_size = batch_size or config.processing.batch_size
         with db.get_session() as session:
             # Fetch unprocessed news with pessimistic lock
-            unprocessed_news = session.query(RawNews)\
-                .filter_by(has_processed=False)\
-                .limit(batch_size)\
-                .with_for_update()\
+            unprocessed_news = session.query(RawNews) \
+                .filter_by(has_processed=False) \
+                .limit(batch_size) \
+                .with_for_update() \
                 .all()
 
             if not unprocessed_news:
                 return {"status": "no unprocessed news"}
 
-            processed_data = []
-            for news in unprocessed_news:
-                # Clean and chunk text
-                cleaned_text = preprocess_persian_document(news.body)
-                chunks = chunk_text(
-                    cleaned_text,
-                    max_tokens=config.processing.max_tokens,
-                    overlap_percent=config.processing.overlap_percent
-                )
-                
-                # Prepare chunk metadata
-                for chunk in chunks:
-                    processed_data.append({
-                        "raw_news_id": news.id,
-                        "source": news.source,
-                        "timestamp": news.timestamp.isoformat(),
-                        "text": chunk,
-                        "token_count": count_tokens(chunk)
-                    })
+            processed_data = [
+                {
+                    "raw_news_id": news.id,
+                    "source": news.source,
+                    "timestamp": news.timestamp.isoformat(),
+                    "text": news.content,
+                    "token_count": count_tokens(news.content)
+                }
+
+                for news in unprocessed_news
+            ]
 
             # Batch process embeddings
             embeddings = []
             text_chunks = [item["text"] for item in processed_data]
             for i in range(0, len(text_chunks), config.processing.embedding_batch_size):
-                batch = text_chunks[i:i+config.processing.embedding_batch_size]
+                batch = text_chunks[i:i + config.processing.embedding_batch_size]
                 embeddings.extend(openai.get_embeddings(batch))
 
             # Prepare FAISS payloads
@@ -98,7 +92,7 @@ def process_news_batch(self, batch_size: int = None):
             # Mark as processed
             news_ids = [news.id for news in unprocessed_news]
             db.mark_news_as_processed(news_ids)
-            
+
             # Periodic index persistence
             if len(payloads) >= config.faiss.save_interval:
                 faiss_mgr.save_index()
@@ -108,13 +102,14 @@ def process_news_batch(self, batch_size: int = None):
                 "created_chunks": len(payloads),
                 "total_tokens": sum(item["token_count"] for item in processed_data)
             }
-    
+
     except Exception as e:
         self.retry(
             exc=e,
             countdown=60,
             max_retries=config.openai.max_retries
         )
+
 
 @app.on_after_configure.connect
 def setup_periodic_tasks(sender, **kwargs):
@@ -125,9 +120,11 @@ def setup_periodic_tasks(sender, **kwargs):
         name='scheduled-news-processing'
     )
 
+
 def start_worker():
     """Entry point for worker process"""
     app.worker_main()
+
 
 if __name__ == '__main__':
     start_worker()

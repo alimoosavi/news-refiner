@@ -4,26 +4,19 @@ pydantic-settings==2.7.1
 redis==5.2.1
 hazm==0.10.0
 apscheduler==3.11.0
-
 tiktoken==0.8.0
 tenacity
-
-
-
-# Database ORM
 sqlalchemy==2.0.23
 alembic==1.13.1
 mysql-connector-python==9.2.0
-
-# Vector Processing
 faiss-cpu==1.8.0
 numpy
 scikit-learn==1.6.1
-
-# NLP Processing
+flower
+langchain
+langchain-community
 openai==1.61.0
 python-dateutil==2.8.2
-tqdm==4.66.1  # For processing progress bars
-
-# Task Queue
+tqdm==4.66.1
 celery==5.3.6
+telethon==1.38.1
