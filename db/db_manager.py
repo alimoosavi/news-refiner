@@ -94,23 +94,38 @@ class DBManager:
         finally:
             session.close()
 
+    def close_connections(self) -> None:
+        """Close all database connections in the pool"""
+        try:
+            self.engine.dispose()
+            self.logger.info("Successfully closed all database connections")
+        except Exception as e:
+            self.logger.error(f"Error closing database connections: {str(e)}")
+            raise
+
     def get_unprocessed_news(self, limit: int = 100) -> List[RawNews]:
         """
         Retrieve unprocessed news articles with limit
-        
+
         Args:
             limit: Maximum number of articles to retrieve
 
         Returns:
-            List of unprocessed RawNews objects
+            List of unprocessed RawNews objects (detached from session)
         """
         with self.get_session() as session:
-            return session.query(RawNews) \
+            news_items = session.query(RawNews) \
                 .filter_by(has_processed=False) \
                 .order_by(RawNews.published_date.desc()) \
                 .limit(limit) \
                 .with_for_update() \
                 .all()
+
+            # Expunge objects from session to avoid session-bound errors
+            for item in news_items:
+                session.expunge(item)
+
+            return news_items
 
     def mark_news_as_processed(self, news_ids: List[int]) -> None:
         """

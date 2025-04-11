@@ -1,10 +1,9 @@
 import re
 import unicodedata
 
+import numpy as np
 import tiktoken
 from sklearn.feature_extraction.text import TfidfVectorizer
-from typing import Optional
-import numpy as np
 
 
 def get_keywords(news_list, top_n=5):
@@ -186,3 +185,20 @@ def extract_title_and_body(source: str, news_content: str):
             body = news_content.replace(match.group(0), '').strip()  # Remove title from content
             return title, body
     return None  # Return None if no title is found
+
+
+NEWS_CATEGORIES = [
+    "Politics",
+    "Economy & Finance",
+    "Technology",
+    "Science & Health",
+    "Sports",
+    "Entertainment",
+    "World News",
+    "Crime & Law",
+    "Environment",
+    "Education",
+    "Lifestyle",
+    "Science & Innovation",
+    "Local News"
+]

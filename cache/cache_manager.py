@@ -46,5 +46,3 @@ class CacheManager:
         if key in self.cache:
             del self.cache[key]
             self.save_cache()
-
-

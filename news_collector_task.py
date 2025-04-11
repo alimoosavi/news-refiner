@@ -2,8 +2,8 @@ from datetime import timedelta
 import logging
 from celery import Celery
 from config import config
-from cache_manager import CacheManager
-from db_manager import DBManager
+from cache.cache_manager import CacheManager
+from db.db_manager import DBManager
 from collectors.concurrent_telegram_collector import ConcurrentTelegramChannelsCollector
 import asyncio
 
