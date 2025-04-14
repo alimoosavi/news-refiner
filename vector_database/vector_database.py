@@ -54,22 +54,40 @@ class VectorDatabaseManager:
             logger.error(f"Error initializing Qdrant collection: {str(e)}")
             raise
 
-    def store(self, vector: List[float], payload: Dict[str, Any]) -> str:
+    def _ensure_collection(self, collection_name: str) -> None:
         """
-        Store a vector and its associated payload in the database
-
+        Ensure that a collection exists, creating it if necessary
+        
         Args:
-            vector: The embedding vector to store
-            payload: Dictionary containing metadata and content
-
-        Returns:
-            str: ID of the stored vector or None if failed
+            collection_name: Name of the collection to check/create
         """
         try:
-            point_id = self.client.count(collection_name=self.collection_name).count
+            collections = self.client.get_collections().collections
+            exists = any(c.name == collection_name for c in collections)
+            
+            if not exists:
+                self.client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(size=self.embedding_dim, distance=Distance.COSINE)
+                )
+                logger.info(f"Created new collection: {collection_name}")
+            else:
+                logger.info(f"Using existing collection: {collection_name}")
+                
+        except Exception as e:
+            logger.error(f"Error ensuring collection {collection_name}: {str(e)}")
+            raise
+
+    def store(self, vector: List[float], payload: Dict[str, Any], collection_name: str) -> str:
+        """Store a vector in a specific collection"""
+        try:
+            # Ensure collection exists
+            self._ensure_collection(collection_name)
+            
+            point_id = self.client.count(collection_name=collection_name).count
             
             self.client.upsert(
-                collection_name=self.collection_name,
+                collection_name=collection_name,
                 points=[
                     models.PointStruct(
                         id=point_id,
@@ -80,7 +98,7 @@ class VectorDatabaseManager:
             )
             return str(point_id)
         except Exception as e:
-            logger.error(f"Error storing vector: {str(e)}")
+            logger.error(f"Error storing vector in {collection_name}: {str(e)}")
             return None
 
     def store_batch(self, vectors: List[List[float]], payloads: List[Dict[str, Any]]) -> List[str]:

@@ -96,7 +96,7 @@ class ProcessingConfig(BaseSettings):
     """News processing pipeline configuration"""
     model_config = SettingsConfigDict(env_prefix="PROCESSING_")
 
-    batch_size: int = Field(100, ge=1, le=1000)  # Match .env
+    batch_size: int = Field(5, ge=1, le=1000)  # Match .env
     interval: int = Field(1, ge=1, le=60)  # Changed to seconds to match .env
     max_tokens: int = Field(512, ge=256, le=2048)
     overlap_percent: float = Field(0.1, ge=0.0, le=1.0)
