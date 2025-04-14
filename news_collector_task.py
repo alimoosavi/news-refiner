@@ -1,6 +1,7 @@
 from datetime import timedelta
 import logging
 from celery import Celery
+from celery.schedules import crontab
 from config import config
 from cache.cache_manager import CacheManager
 from db.db_manager import DBManager
@@ -13,8 +14,15 @@ app.conf.update(
     task_serializer='json',
     accept_content=['json'],
     result_expires=3600,
-    worker_concurrency=1,  # Collector should run single instance at a time
-    task_time_limit=config.celery.task_time_limit
+    worker_concurrency=1,
+    task_time_limit=config.celery.task_time_limit,
+    # Add beat schedule configuration
+    beat_schedule={
+        'collect-news-every-interval': {
+            'task': 'news_collector_task.collect_news',
+            'schedule': timedelta(minutes=1),  # or use config.processing.interval if defined in minutes
+        }
+    }
 )
 
 
@@ -85,16 +93,6 @@ def collect_news(self):
     # finally:
     #     if db_manager:  # Proper connection cleanup
     #         db_manager.close_connections()
-
-
-@app.on_after_configure.connect
-def setup_periodic_collection(sender, **kwargs):
-    """Configure scheduled collection using config values"""
-    sender.add_periodic_task(
-        timedelta(minutes=config.collector.interval_minutes),
-        collect_news.s(),
-        name='scheduled-news-collection'
-    )
 
 
 def start_worker():
