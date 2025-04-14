@@ -323,7 +323,7 @@ def main():
     # Set up DB manager
     db_manager = DBManager(
         user=config.database.user,
-        password=config.database.password,
+        password=config.database.passkey,
         host=config.database.hostname,
         port=config.database.port,
         database=config.database.name,

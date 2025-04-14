@@ -14,7 +14,7 @@ def main():
     # Set up DB manager
     db_manager = DBManager(
         user=config.database.user,
-        password=config.database.password,
+        password=config.database.passkey,
         host=config.database.hostname,
         port=config.database.port,
         database=config.database.name,
@@ -24,8 +24,8 @@ def main():
     )
 
     vector_database_manager = VectorDatabaseManager(
-        index_path="./faiss_data/news.index",
-        metadata_path="./faiss_data/news_metadata.pkl"
+        index_path=config.vector_db.index_path,
+        metadata_path=config.vector_db.metadata_path
     )
 
     # Initialize pipeline

@@ -1,36 +1,35 @@
 import logging
 from contextlib import contextmanager
 from datetime import datetime
-from typing import List
+from typing import List, Optional, Iterator
 
 from sqlalchemy import create_engine, Column, Integer, Text, DateTime, Boolean, func, Index
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import QueuePool
+from sqlalchemy.sql import expression
 
 from collectors.schema import News
 
 Base = declarative_base()
 
-
 class RawNews(Base):
-    """Raw news articles table schema matching the existing database"""
+    """Raw news articles table schema for PostgreSQL database"""
     __tablename__ = 'raw_news'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     source = Column(Text, nullable=False)
-    content = Column(Text, nullable=False)  # Changed from body to content
-    published_date = Column(DateTime, nullable=False)  # Changed from timestamp
-    has_processed = Column(Boolean, default=False, nullable=True)  # tinyint(1) default 0
+    content = Column(Text, nullable=False)
+    published_date = Column(DateTime(timezone=True), nullable=False)
+    has_processed = Column(Boolean, server_default=expression.false(), nullable=False)
 
-    # Define indexes matching the SQL
+    # PostgreSQL-specific indexes
     __table_args__ = (
         Index('idx_news_published_date', published_date),
-        Index('idx_news_published_date_processed', published_date, has_processed),
-        Index('idx_raw_news_published_date', published_date),
-        Index('idx_raw_news_published_date_processed', published_date, has_processed),
+        Index('idx_news_published_date_processed', published_date, has_processed,
+              postgresql_where=(has_processed == False)),
     )
-
 
 class DBManager:
     def __init__(
@@ -40,13 +39,13 @@ class DBManager:
             host: str,
             port: int,
             database: str,
-            connector: str = "mysqlconnector",
+            connector: str = "psycopg2",
             pool_size: int = 10,
             max_overflow: int = 20,
             logger: logging.Logger = logging.getLogger(__name__)
     ):
         """
-        Initialize database connection manager
+        Initialize PostgreSQL database connection manager
 
         Args:
             user: Database username
@@ -54,12 +53,16 @@ class DBManager:
             host: Database host
             port: Database port
             database: Database name
-            connector: MySQL connector type
+            connector: PostgreSQL connector type (default: psycopg2)
             pool_size: Connection pool size
             max_overflow: Maximum number of connections to overflow
+            logger: Logger instance
         """
+        if connector not in ["psycopg2", "psycopg", "asyncpg", "pg8000"]:
+            raise ValueError(f"Unsupported PostgreSQL connector: {connector}")
+
         self.connection_string = (
-            f"mysql+{connector}://{user}:{password}@{host}:{port}/{database}"
+            f"postgresql+{connector}://{user}:{password}@{host}:{port}/{database}"
         )
 
         self.engine = create_engine(
@@ -77,10 +80,10 @@ class DBManager:
         self.logger = logger
 
     @contextmanager
-    def get_session(self) -> Session:
+    def get_session(self) -> Iterator[Session]:
         """
-        Get a database session with automatic cleanup
-        
+        Provide a database session with automatic cleanup
+
         Yields:
             SQLAlchemy Session object
         """
@@ -88,8 +91,9 @@ class DBManager:
         try:
             yield session
             session.commit()
-        except Exception:
+        except Exception as e:
             session.rollback()
+            self.logger.error(f"Session rollback due to error: {str(e)}")
             raise
         finally:
             session.close()
@@ -99,7 +103,7 @@ class DBManager:
         try:
             self.engine.dispose()
             self.logger.info("Successfully closed all database connections")
-        except Exception as e:
+        except SQLAlchemyError as e:
             self.logger.error(f"Error closing database connections: {str(e)}")
             raise
 
@@ -121,7 +125,7 @@ class DBManager:
                 .with_for_update() \
                 .all()
 
-            # Expunge objects from session to avoid session-bound errors
+            # Detach objects to avoid session-bound errors
             for item in news_items:
                 session.expunge(item)
 
@@ -130,10 +134,10 @@ class DBManager:
     def mark_news_as_processed(self, news_ids: List[int]) -> None:
         """
         Mark multiple news articles as processed
-        
+
         Args:
             news_ids: List of news article IDs to mark as processed
-        
+
         Raises:
             SQLAlchemyError: If database update fails
         """
@@ -151,14 +155,19 @@ class DBManager:
                     },
                     synchronize_session=False
                 )
-                session.commit()
-            except Exception as e:
+            except SQLAlchemyError as e:
                 session.rollback()
                 raise RuntimeError(f"Failed to mark news as processed: {str(e)}") from e
 
-    def create_tables(self) -> None:
-        """Create all database tables if they don't exist"""
-        Base.metadata.create_all(self.engine)
+    def initialize_database(self) -> None:
+        """Initialize PostgreSQL database by creating required tables and indexes"""
+        try:
+            self.logger.info("Creating database tables...")
+            Base.metadata.create_all(self.engine)
+            self.logger.info("Database tables created successfully")
+        except SQLAlchemyError as e:
+            self.logger.error(f"Failed to initialize database: {str(e)}")
+            raise
 
     def get_unprocessed_count(self) -> int:
         """Get count of unprocessed news articles"""
@@ -172,8 +181,7 @@ class DBManager:
         Store a batch of raw news items in the database
 
         Args:
-            news_items: List of dictionaries containing news data
-                Each dict should have:
+            news_items: List of News objects containing:
                 - source: str
                 - content: str
                 - published_date: datetime or str (ISO format)
@@ -186,44 +194,53 @@ class DBManager:
             ValueError: If required fields are missing
             SQLAlchemyError: If database operation fails
         """
-
         with self.get_session() as session:
             try:
-                # Prepare news items for bulk insert
                 news_objects = []
-
                 for item in news_items:
-                    # Validate required fields
                     if not all(k in item for k in ['source', 'content', 'published_date']):
                         raise ValueError(f"Missing required fields in news item: {item}")
 
-                    # Handle datetime conversion if string is provided
+                    # Handle datetime conversion
                     if isinstance(item['published_date'], str):
-                        published_date = datetime.fromisoformat(item['published_date'].replace('Z', '+00:00'))
+                        try:
+                            published_date = datetime.fromisoformat(
+                                item['published_date'].replace('Z', '+00:00')
+                            )
+                        except ValueError as e:
+                            raise ValueError(f"Invalid published_date format: {item['published_date']}") from e
                     else:
                         published_date = item['published_date']
 
-                    # Create RawNews object
                     news = RawNews(
                         source=item['source'],
                         content=item['content'],
                         published_date=published_date,
                         has_processed=False
                     )
-
                     news_objects.append(news)
 
-                # Bulk insert
-                session.bulk_save_objects(news_objects)
-                session.flush()
-
-                # Collect inserted IDs
-                inserted_ids = [news.id for news in news_objects]
-
+                self.logger.info(f"Inserting {len(news_objects)} news items")
+                session.add_all(news_objects)
                 session.commit()
-                return inserted_ids
 
-            except Exception as e:
+                return [news.id for news in news_objects]
+
+            except (ValueError, SQLAlchemyError) as e:
                 session.rollback()
-                self.logger.error(f"Failed to store news batch: {str(e)}")
+                self.logger.error(f"Failed to store {len(news_items)} news items: {str(e)}")
                 raise
+
+    def migrate_database(self) -> None:
+        """
+        Perform database migrations (placeholder for Alembic or manual migrations)
+
+        Note: Currently initializes tables; replace with proper migration logic.
+        """
+        try:
+            self.logger.info("Running database migrations...")
+            self.initialize_database()  # Temporary; replace with Alembic
+            self.logger.info("Database migrations completed successfully")
+        except SQLAlchemyError as e:
+            self.logger.error(f"Database migration failed: {str(e)}")
+            raise

@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Load environment variables first
 load_dotenv()
 
 
@@ -44,10 +43,10 @@ class DatabaseConfig(BaseSettings):
 
     hostname: str = Field(..., min_length=3)
     name: str = "news_db"
-    user: str = "root"
-    password: str = Field("", min_length=0)  # Allow empty password as per .env
-    port: int = Field(3306, ge=1024, le=65535)
-    connector: str = "mysqlconnector"
+    user: str = "postgres"  # Changed default user
+    passkey: str = Field(..., min_length=1)  # Required password for PostgreSQL
+    port: int = Field(5432, ge=1024, le=65535)  # Changed default port
+    connector: str = "psycopg2"  # Changed default connector
     pool_size: int = Field(10, ge=1, le=50)
     max_overflow: int = Field(20, ge=0, le=100)
 
@@ -113,6 +112,18 @@ class LoggingConfig(BaseSettings):
     file: Optional[str] = Field("/var/log/news_processor.log", min_length=3)
 
 
+class VectorDatabaseConfig(BaseSettings):
+    """Vector database configuration"""
+    model_config = SettingsConfigDict(env_prefix="VECTOR_DB_")
+
+    host: str = Field("localhost", min_length=3)
+    port: int = Field(6333, ge=1024, le=65535)
+    grpc_port: int = Field(6334, ge=1024, le=65535)
+    collection: str = Field("news_vectors", min_length=1)
+    index_path: str = Field("./faiss_data/news.index", min_length=3)
+    metadata_path: str = Field("./faiss_data/news_metadata.pkl", min_length=3)
+
+# In the ConfigManager class, add:
 class ConfigManager(BaseSettings):
     """Main configuration aggregator"""
     model_config = SettingsConfigDict(
@@ -128,6 +139,7 @@ class ConfigManager(BaseSettings):
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     celery: CeleryConfig = Field(default_factory=CeleryConfig)
     faiss: FAISSConfig = Field(default_factory=FAISSConfig)
+    vector_db: VectorDatabaseConfig = Field(default_factory=VectorDatabaseConfig)
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
