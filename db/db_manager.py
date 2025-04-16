@@ -1,18 +1,18 @@
 import logging
 from contextlib import contextmanager
-from datetime import datetime
-from typing import List, Optional, Iterator
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional, Iterator
+import uuid
 
 from sqlalchemy import create_engine, Column, Integer, Text, DateTime, Boolean, func, Index
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import QueuePool
 from sqlalchemy.sql import expression
 
 from collectors.schema import News
-
-Base = declarative_base()
+from db.base import Base
+from db.chat_models import ChatSession, ChatMessage, ChatReference
 
 class RawNews(Base):
     """Raw news articles table schema for PostgreSQL database"""
@@ -30,6 +30,7 @@ class RawNews(Base):
         Index('idx_news_published_date_processed', published_date, has_processed,
               postgresql_where=(has_processed == False)),
     )
+
 
 class DBManager:
     def __init__(
@@ -244,3 +245,150 @@ class DBManager:
         except SQLAlchemyError as e:
             self.logger.error(f"Database migration failed: {str(e)}")
             raise
+
+    # Chat Session Operations
+    def create_chat_session(self) -> Dict[str, Any]:
+        """Create a new chat session"""
+        with self.get_session() as session:
+            chat_session = ChatSession()
+            session.add(chat_session)
+            session.commit()
+            
+            # Return dictionary instead of session object
+            return {
+                "id": chat_session.id,
+                "created_at": chat_session.created_at
+            }
+
+    def get_chat_session(self, session_id: uuid.UUID) -> Optional[ChatSession]:
+        """Get chat session by ID"""
+        with self.get_session() as session:
+            return session.query(ChatSession).get(session_id)
+
+    def update_chat_session_activity(self, session_id: uuid.UUID) -> None:
+        """Update last active timestamp of a chat session"""
+        with self.get_session() as session:
+            chat_session = session.query(ChatSession).get(session_id)
+            if chat_session:
+                chat_session.last_active = datetime.utcnow()
+                session.commit()
+
+    # Chat Message Operations
+    def create_chat_message(self, session_id: uuid.UUID, role: str, content: str) -> Dict[str, Any]:
+        """Create a new chat message"""
+        with self.get_session() as session:
+            message = ChatMessage(
+                session_id=session_id,
+                role=role,
+                content=content
+            )
+            session.add(message)
+            session.commit()
+            session.refresh(message)
+            
+            # Return dictionary instead of session object
+            return {
+                "id": message.id,
+                "role": message.role,
+                "content": message.content,
+                "timestamp": message.timestamp
+            }
+
+    def get_chat_history(self, session_id: uuid.UUID, limit: int) -> List[Dict[str, Any]]:
+        """Get chat history for a session"""
+        with self.get_session() as session:
+            messages = session.query(ChatMessage)\
+                .filter(ChatMessage.session_id == session_id)\
+                .order_by(ChatMessage.timestamp.desc())\
+                .limit(limit)\
+                .all()
+            
+            # Convert to dictionaries before returning
+            return [
+                {
+                    "id": msg.id,
+                    "role": msg.role,
+                    "content": msg.content,
+                    "timestamp": msg.timestamp
+                }
+                for msg in messages
+            ]
+
+    # Chat Reference Operations
+    def create_chat_references(self, references: List[Dict]) -> List[ChatReference]:
+        """Create multiple chat references"""
+        with self.get_session() as session:
+            chat_refs = []
+            for ref in references:
+                chat_ref = ChatReference(
+                    session_id=ref['session_id'],
+                    message_id=ref['message_id'],
+                    news_id=ref['news_id'],
+                    relevance_score=ref['relevance_score'],
+                    content_snippet=ref['content_snippet']
+                )
+                session.add(chat_ref)
+                chat_refs.append(chat_ref)
+            session.commit()
+            return chat_refs
+
+    def get_message_references(self, message_id: uuid.UUID) -> List[ChatReference]:
+        """Get references for a specific message"""
+        with self.get_session() as session:
+            return session.query(ChatReference) \
+                .filter(ChatReference.message_id == message_id) \
+                .order_by(ChatReference.relevance_score.desc()) \
+                .all()
+
+    def get_session_references(self, session_id: uuid.UUID) -> List[ChatReference]:
+        """Get all references for a chat session"""
+        with self.get_session() as session:
+            return session.query(ChatReference) \
+                .filter(ChatReference.session_id == session_id) \
+                .order_by(ChatReference.relevance_score.desc()) \
+                .all()
+
+    def cleanup_old_sessions(self, days: int = 30) -> int:
+        """Delete chat sessions older than specified days"""
+        with self.get_session() as session:
+            cutoff_date = datetime.utcnow() - timedelta(days=days)
+            deleted = session.query(ChatSession) \
+                .filter(ChatSession.last_active < cutoff_date) \
+                .delete(synchronize_session=False)
+            session.commit()
+            return deleted
+
+    def get_session_info(self, session_id: uuid.UUID) -> Dict[str, Any]:
+        """Get comprehensive session information"""
+        with self.get_session() as session:
+            chat_session = session.query(ChatSession).get(session_id)
+            if not chat_session:
+                return None
+
+            messages = session.query(ChatMessage) \
+                .filter(ChatMessage.session_id == session_id) \
+                .order_by(ChatMessage.timestamp) \
+                .all()
+
+            return {
+                "session_id": str(chat_session.id),
+                "created_at": chat_session.created_at.isoformat(),
+                "last_active": chat_session.last_active.isoformat(),
+                "messages": [
+                    {
+                        "id": str(msg.id),
+                        "role": msg.role,
+                        "content": msg.content,
+                        "timestamp": msg.timestamp.isoformat(),
+                        "references": [
+                            {
+                                "news_id": ref.news_id,
+                                "relevance_score": ref.relevance_score,
+                                "content_snippet": ref.content_snippet
+                            }
+                            for ref in msg.references
+                        ]
+                    }
+                    for msg in messages
+                ]
+            }
