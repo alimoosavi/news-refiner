@@ -12,6 +12,8 @@ from config import config
 # Configure logging
 logger = logging.getLogger(__name__)
 
+from .reranker import Reranker
+
 
 class Retriever:
     def __init__(
@@ -33,6 +35,7 @@ class Retriever:
         self.max_retries = max_retries
         self.default_top_k = default_top_k
         self.similarity_threshold = similarity_threshold
+        self.reranker = Reranker()
 
     async def search(
             self,
@@ -67,6 +70,17 @@ class Retriever:
             # Format results
             return self._format_results(results)
 
+            # Rerank results
+            if results:
+                reranked_results = await self.reranker.rerank(
+                    query=query,
+                    results=self._format_results(results),
+                    top_k=top_k or self.default_top_k
+                )
+                return reranked_results
+
+            return []
+            
         except Exception as e:
             logger.error(f"Search failed: {str(e)}")
             return []

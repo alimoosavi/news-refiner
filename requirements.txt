@@ -21,3 +21,5 @@ tqdm==4.66.1
 celery==5.3.6
 telethon==1.38.1
 qdrant-client
+fastapi
+uvicorn

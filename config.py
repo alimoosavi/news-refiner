@@ -123,7 +123,16 @@ class VectorDatabaseConfig(BaseSettings):
     index_path: str = Field("./faiss_data/news.index", min_length=3)
     metadata_path: str = Field("./faiss_data/news_metadata.pkl", min_length=3)
 
-# In the ConfigManager class, add:
+class RerankerConfig(BaseSettings):
+    """Reranker configuration"""
+    model_config = SettingsConfigDict(env_prefix="RERANKER_")
+
+    model: str = "gpt-3.5-turbo"
+    temperature: float = Field(0.1, ge=0.0, le=1.0)
+    max_tokens: int = Field(1000, ge=100, le=4000)
+    top_k: int = Field(5, ge=1, le=20)
+
+# Update ConfigManager
 class ConfigManager(BaseSettings):
     """Main configuration aggregator"""
     model_config = SettingsConfigDict(
@@ -142,6 +151,7 @@ class ConfigManager(BaseSettings):
     vector_db: VectorDatabaseConfig = Field(default_factory=VectorDatabaseConfig)
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    reranker: RerankerConfig = Field(default_factory=RerankerConfig)
 
     @classmethod
     def load(cls):
