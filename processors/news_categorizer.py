@@ -97,3 +97,32 @@ class NewsCategorizer:
         except Exception as e:
             self.logger.error(f"Batch categorization failed: {str(e)}")
             raise
+
+    # Add this method to the NewsCategorizer class
+    
+    async def categorize_text(self, text: str) -> str:
+        """
+        Categorize a single text query
+        """
+        try:
+            # Use the existing prompt template with NEWS_CATEGORIES
+            formatted_prompt = self.prompt.format_messages(
+                categories="\n".join(NEWS_CATEGORIES),
+                format_instructions=self.output_parser.get_format_instructions(),
+                text=text
+            )
+            
+            # Get category from LLM
+            response = await self.llm.apredict_messages(formatted_prompt)
+            parsed_response = self.output_parser.parse(response.content)
+            category = parsed_response['category']
+            
+            if category not in NEWS_CATEGORIES:
+                self.logger.warning(f"Invalid category detected: {category}, defaulting to 'Local News'")
+                return "Local News"
+                
+            return category
+            
+        except Exception as e:
+            self.logger.error(f"Error categorizing text: {str(e)}")
+            return "Local News"

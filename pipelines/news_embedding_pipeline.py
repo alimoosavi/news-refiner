@@ -4,7 +4,7 @@ from datetime import datetime
 
 from db.db_manager import DBManager, RawNews
 from config import config
-from processors.news_categorizer import NewsCategorizer
+from processors.news_preprocessor import NewsPreprocessor
 from vector_database.vector_database import VectorDatabaseManager
 from langchain_openai import OpenAIEmbeddings
 
@@ -15,20 +15,106 @@ class NewsProcessingPipeline:
             self,
             db_manager: DBManager,
             vector_db_manager: VectorDatabaseManager,
-            categorizer: NewsCategorizer,
+            preprocessor: NewsPreprocessor,
             batch_size: int = 25
     ):
         self.db_manager = db_manager
         self.vector_db = vector_db_manager
-        self.categorizer = categorizer
+        self.preprocessor = preprocessor
         self.batch_size = batch_size
         
         self.embeddings = OpenAIEmbeddings(
             model="text-embedding-ada-002",
-            openai_api_key=config.openai.api_key,
-            max_retries=config.openai.max_retries,
-            timeout=config.openai.timeout
+            openai_api_key=config.openai.api_key
         )
+
+    async def _process_news_item(self, item: RawNews) -> bool:
+        """Process a single news item"""
+        try:
+            # Preprocess the news
+            chunks = await self.preprocessor.process_news(item.content)
+            if not chunks:
+                return False
+
+            # Filter only meaningful chunks
+            meaningful_chunks = [chunk for chunk in chunks if chunk.is_meaningful]
+            if not meaningful_chunks:
+                return False
+
+            # Process meaningful chunks
+            for chunk in meaningful_chunks:
+                # Generate embedding
+                embedding = await self.embeddings.aembed_query(chunk.content)
+                
+                # Store in vector database
+                metadata = {
+                    "news_id": item.id,
+                    "source": item.source,
+                    "published_date": item.published_date.isoformat(),
+                    "content": chunk.content,
+                    "keywords": chunk.keywords,
+                    "website_link": chunk.website_link
+                }
+                
+                self.vector_db.store(
+                    vector=embedding,
+                    payload=metadata
+                )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to process news {item.id}: {str(e)}")
+            return False
+
+    async def run(self, limit: int = 100) -> Dict[str, Any]:
+        """Run the pipeline"""
+        start_time = datetime.now()
+        total_stats = {
+            "total_processed": 0,
+            "total_chunks": 0,
+            "meaningful_chunks": 0,
+            "failed": 0,
+            "duration_seconds": 0,
+            "items_per_second": 0
+        }
+
+        try:
+            # Get unprocessed news
+            news_items = self.db_manager.get_unprocessed_news(limit=limit)
+            if not news_items:
+                logger.info("No unprocessed news found")
+                return total_stats
+
+            # Process each news item
+            processed_ids = set()
+            for item in news_items:
+                try:
+                    if await self._process_news_item(item):
+                        processed_ids.add(item.id)
+                        total_stats["total_processed"] += 1
+                    else:
+                        total_stats["failed"] += 1
+                except Exception as e:
+                    logger.error(f"Failed to process news {item.id}: {str(e)}")
+                    total_stats["failed"] += 1
+
+            # Mark successfully processed items
+            if processed_ids:
+                self.db_manager.mark_news_as_processed(list(processed_ids))
+
+            # Calculate timing stats
+            duration = (datetime.now() - start_time).total_seconds()
+            total_stats["duration_seconds"] = duration
+            total_stats["items_per_second"] = (
+                total_stats["total_processed"] / duration if duration > 0 else 0
+            )
+
+            return total_stats
+
+        except Exception as e:
+            logger.error(f"Pipeline failed: {str(e)}")
+            raise
 
     async def _generate_embedding(self, content: str) -> List[float]:
         """Generate embedding for news content"""
@@ -115,48 +201,4 @@ class NewsProcessingPipeline:
 
         except Exception as e:
             logger.error(f"Batch processing failed: {str(e)}")
-            raise
-
-    async def run(self, limit: int = 100) -> Dict[str, Any]:
-        """Run the pipeline"""
-        start_time = datetime.now()
-        total_stats = {
-            "total_processed": 0,
-            "categories": {},
-            "failed": 0,
-            "duration_seconds": 0,
-            "items_per_second": 0
-        }
-
-        try:
-            # Get unprocessed news
-            news_items = self.db_manager.get_unprocessed_news(limit=limit)
-            if not news_items:
-                logger.info("No unprocessed news found")
-                return total_stats
-
-            # Process in batches
-            for i in range(0, len(news_items), self.batch_size):
-                batch = news_items[i:i + self.batch_size]
-                batch_stats = await self.process_batch(batch)
-                
-                # Update total stats
-                total_stats["total_processed"] += batch_stats["total_processed"]
-                total_stats["failed"] += batch_stats["failed"]
-                for category, count in batch_stats["categories"].items():
-                    if category not in total_stats["categories"]:
-                        total_stats["categories"][category] = 0
-                    total_stats["categories"][category] += count
-
-            # Calculate timing stats
-            duration = (datetime.now() - start_time).total_seconds()
-            total_stats["duration_seconds"] = duration
-            total_stats["items_per_second"] = (
-                total_stats["total_processed"] / duration if duration > 0 else 0
-            )
-
-            return total_stats
-
-        except Exception as e:
-            logger.error(f"Pipeline failed: {str(e)}")
             raise

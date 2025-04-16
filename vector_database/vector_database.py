@@ -7,52 +7,87 @@ from qdrant_client.http.models import Distance, VectorParams
 logger = logging.getLogger(__name__)
 
 class VectorDatabaseManager:
-    """
-    Manager for vector database operations using Qdrant
-    Handles storing and managing vector embeddings and their associated metadata
-    """
+    # Add constant for collection name
+    DEFAULT_COLLECTION = "news"
 
     def __init__(
             self,
             host: str = "localhost",
             port: int = 6333,
-            collection_name: str = "news_vectors",
             embedding_dim: int = 1536,
     ):
-        """
-        Initialize the Qdrant vector database manager
-
-        Args:
-            host: Qdrant server host
-            port: Qdrant server port
-            collection_name: Name of the collection to use
-            embedding_dim: Dimension of embeddings to store
-        """
         self.client = QdrantClient(host=host, port=port)
-        self.collection_name = collection_name
+        self.collection_name = self.DEFAULT_COLLECTION  # Always use default collection
         self.embedding_dim = embedding_dim
         
         # Initialize collection
         self._initialize()
 
     def _initialize(self) -> None:
-        """Initialize the vector database, creating collection if it doesn't exist"""
+        """Initialize the vector database with a single collection"""
         try:
             collections = self.client.get_collections().collections
             exists = any(c.name == self.collection_name for c in collections)
             
             if not exists:
+                # Create collection with payload indexes
                 self.client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=VectorParams(size=self.embedding_dim, distance=Distance.COSINE)
                 )
-                logger.info(f"Created new collection: {self.collection_name}")
-            else:
-                logger.info(f"Using existing collection: {self.collection_name}")
                 
+                # Create payload indexes
+                self.client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="keywords",
+                    field_schema="keyword"
+                )
+                
+                self.client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="content",
+                    field_schema="text"
+                )
+                
+                logger.info(f"Created collection: {self.collection_name}")
+            
         except Exception as e:
-            logger.error(f"Error initializing Qdrant collection: {str(e)}")
+            logger.error(f"Error initializing Qdrant: {str(e)}")
             raise
+
+    def hybrid_search(
+        self,
+        query_vector: List[float],
+        keywords: List[str],
+        limit: int = 5,
+        score_threshold: float = 0.7
+    ) -> List[Dict[str, Any]]:
+        """Perform hybrid search using both vector similarity and keyword matching"""
+        try:
+            results = self.client.search(
+                collection_name=self.collection_name,
+                query_vector=query_vector,
+                query_filter=models.Filter(
+                    should=[
+                        models.FieldCondition(
+                            key="keywords",
+                            match=models.MatchAny(any=keywords)
+                        )
+                    ]
+                ),
+                limit=limit,
+                score_threshold=score_threshold
+            )
+            
+            return [{
+                "id": str(hit.id),
+                "score": hit.score,
+                "payload": hit.payload
+            } for hit in results]
+            
+        except Exception as e:
+            logger.error(f"Error during hybrid search: {str(e)}")
+            return []
 
     def _ensure_collection(self, collection_name: str) -> None:
         """
@@ -78,16 +113,13 @@ class VectorDatabaseManager:
             logger.error(f"Error ensuring collection {collection_name}: {str(e)}")
             raise
 
-    def store(self, vector: List[float], payload: Dict[str, Any], collection_name: str) -> str:
-        """Store a vector in a specific collection"""
+    def store(self, vector: List[float], payload: Dict[str, Any]) -> str:
+        """Store a vector in the default collection"""
         try:
-            # Ensure collection exists
-            self._ensure_collection(collection_name)
-            
-            point_id = self.client.count(collection_name=collection_name).count
+            point_id = self.client.count(collection_name=self.collection_name).count
             
             self.client.upsert(
-                collection_name=collection_name,
+                collection_name=self.collection_name,
                 points=[
                     models.PointStruct(
                         id=point_id,
@@ -98,7 +130,7 @@ class VectorDatabaseManager:
             )
             return str(point_id)
         except Exception as e:
-            logger.error(f"Error storing vector in {collection_name}: {str(e)}")
+            logger.error(f"Error storing vector: {str(e)}")
             return None
 
     def store_batch(self, vectors: List[List[float]], payloads: List[Dict[str, Any]]) -> List[str]:
@@ -132,22 +164,34 @@ class VectorDatabaseManager:
             logger.error(f"Error storing batch of vectors: {str(e)}")
             return []
 
-    def search(self, query_vector: List[float], k: int = 5) -> List[Dict[str, Any]]:
+    def search(
+        self,
+        query_vector: List[float],
+        collection_name: Optional[str] = None,
+        limit: int = 5,
+        score_threshold: float = 0.7
+    ) -> List[Dict[str, Any]]:
         """
         Search for similar vectors
 
         Args:
             query_vector: The query embedding vector
-            k: Number of results to return
+            collection_name: Optional name of collection to search in
+            limit: Number of results to return
+            score_threshold: Minimum similarity score threshold
 
         Returns:
             List of dictionaries containing search results with scores and payloads
         """
         try:
+            # Use specified collection or default
+            collection = collection_name or self.collection_name
+            
             results = self.client.search(
-                collection_name=self.collection_name,
+                collection_name=collection,
                 query_vector=query_vector,
-                limit=k
+                limit=limit,
+                score_threshold=score_threshold
             )
             
             return [{
@@ -156,7 +200,7 @@ class VectorDatabaseManager:
                 "payload": hit.payload
             } for hit in results]
         except Exception as e:
-            logger.error(f"Error during search: {str(e)}")
+            logger.error(f"Error during search in collection {collection}: {str(e)}")
             return []
 
     def delete(self, idx: str) -> bool:

@@ -9,9 +9,9 @@ os.environ['OBJC_DISABLE_INITIALIZE_FORK_SAFETY'] = 'YES'
 
 from config import config
 from db.db_manager import DBManager
+from processors.news_preprocessor import NewsPreprocessor
 from pipelines.news_embedding_pipeline import NewsProcessingPipeline
 from vector_database.vector_database import VectorDatabaseManager
-from processors.news_categorizer import NewsCategorizer
 
 # Configure Celery
 app = Celery('news_processor', broker=config.celery.broker_url)
@@ -40,16 +40,12 @@ logger = logging.getLogger(__name__)
 def process_news_embeddings(self, limit: int = 10):
     """Celery task for processing news embeddings"""
     try:
-        # Set up DB manager
         db_manager = DBManager(
             user=config.database.user,
             password=config.database.passkey,
             host=config.database.hostname,
             port=config.database.port,
-            database=config.database.name,
-            connector=config.database.connector,
-            pool_size=config.database.pool_size,
-            max_overflow=config.database.max_overflow
+            database=config.database.name
         )
 
         vector_database_manager = VectorDatabaseManager(
@@ -58,17 +54,17 @@ def process_news_embeddings(self, limit: int = 10):
             embedding_dim=config.openai.embedding_dim
         )
 
-        categorizer = NewsCategorizer(logger)
+        preprocessor = NewsPreprocessor(logger)
 
         # Initialize pipeline
         pipeline = NewsProcessingPipeline(
             db_manager=db_manager,
             vector_db_manager=vector_database_manager,
-            categorizer=categorizer,
+            preprocessor=preprocessor,
             batch_size=config.processing.batch_size
         )
 
-        # Run the pipeline using asyncio
+        # Run the pipeline
         stats = asyncio.run(pipeline.run(limit=limit))
         logger.info(f"Pipeline stats: {stats}")
         return stats
