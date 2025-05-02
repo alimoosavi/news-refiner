@@ -2,18 +2,14 @@ import logging
 import time
 from typing import List, Dict, Any, Optional
 
-# For embedding generation
 from langchain_openai import OpenAIEmbeddings
-
 from vector_database.vector_database import VectorDatabaseManager
 from processors.news_preprocessor import QueryPreprocessor
 from config import config
 
-# Configure logging
 logger = logging.getLogger(__name__)
 
 from .reranker import Reranker
-
 
 class Retriever:
     def __init__(
@@ -24,7 +20,7 @@ class Retriever:
             model_name: str = "text-embedding-ada-002",
             max_retries: int = 3,
             default_top_k: int = 5,
-            similarity_threshold: float = 0.6,
+            similarity_threshold: float = 0.6
     ):
         self.vector_db = vector_db_manager
         self.query_preprocessor = query_preprocessor
@@ -44,18 +40,15 @@ class Retriever:
             threshold: Optional[float] = None,
             metadata_filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        """Search using hybrid approach (vector similarity + keywords)"""
+        """Search using vector database"""
         try:
-            # Process query to get keywords
+            # Get initial results from vector search
             query_chunk = await self.query_preprocessor.process_query(query)
             if not query_chunk or not query_chunk.keywords:
                 logger.warning("No valid query chunk or keywords generated")
                 return []
 
-            # Get query embedding
             query_embedding = await self.embeddings.aembed_query(query_chunk.content)
-
-            # Perform hybrid search
             results = self.vector_db.hybrid_search(
                 query_vector=query_embedding,
                 keywords=query_chunk.keywords,
@@ -63,24 +56,25 @@ class Retriever:
                 score_threshold=threshold or self.similarity_threshold
             )
 
-            # Apply additional metadata filters if provided
+            if not results:
+                return []
+
+            # Apply metadata filters if provided
             if metadata_filters:
                 results = self._apply_metadata_filters(results, metadata_filters)
 
-            # Format results
-            return self._format_results(results)
-
-            # Rerank results
-            if results:
+            # Format and rerank results
+            formatted_results = self._format_results(results)
+            if formatted_results:
                 reranked_results = await self.reranker.rerank(
                     query=query,
-                    results=self._format_results(results),
+                    results=formatted_results,
                     top_k=top_k or self.default_top_k
                 )
                 return reranked_results
 
-            return []
-            
+            return formatted_results
+
         except Exception as e:
             logger.error(f"Search failed: {str(e)}")
             return []

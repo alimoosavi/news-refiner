@@ -115,23 +115,31 @@ class VectorDatabaseManager:
 
     def store(self, vector: List[float], payload: Dict[str, Any]) -> str:
         """Store a vector in the default collection"""
-        try:
-            point_id = self.client.count(collection_name=self.collection_name).count
-            
-            self.client.upsert(
-                collection_name=self.collection_name,
-                points=[
-                    models.PointStruct(
-                        id=point_id,
-                        vector=vector,
-                        payload=payload
-                    )
-                ]
-            )
-            return str(point_id)
-        except Exception as e:
-            logger.error(f"Error storing vector: {str(e)}")
-            return None
+        max_retries = 3
+        retry_delay = 1
+        
+        for attempt in range(max_retries):
+            try:
+                point_id = self.client.count(collection_name=self.collection_name).count
+                
+                self.client.upsert(
+                    collection_name=self.collection_name,
+                    points=[
+                        models.PointStruct(
+                            id=point_id,
+                            vector=vector,
+                            payload=payload
+                        )
+                    ]
+                )
+                return str(point_id)
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    logger.error(f"Error storing vector after {max_retries} attempts: {str(e)}")
+                    return None
+                logger.warning(f"Attempt {attempt + 1} failed, retrying in {retry_delay}s: {str(e)}")
+                time.sleep(retry_delay)
+                retry_delay *= 2
 
     def store_batch(self, vectors: List[List[float]], payloads: List[Dict[str, Any]]) -> List[str]:
         """
@@ -169,7 +177,8 @@ class VectorDatabaseManager:
         query_vector: List[float],
         collection_name: Optional[str] = None,
         limit: int = 5,
-        score_threshold: float = 0.7
+        score_threshold: float = 0.7,
+        metadata_filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
         Search for similar vectors
@@ -179,6 +188,7 @@ class VectorDatabaseManager:
             collection_name: Optional name of collection to search in
             limit: Number of results to return
             score_threshold: Minimum similarity score threshold
+            metadata_filters: Optional filters for metadata fields
 
         Returns:
             List of dictionaries containing search results with scores and payloads
@@ -187,9 +197,45 @@ class VectorDatabaseManager:
             # Use specified collection or default
             collection = collection_name or self.collection_name
             
+            # Create filter if metadata filters are provided
+            query_filter = None
+            if metadata_filters:
+                conditions = []
+                for key, value in metadata_filters.items():
+                    if isinstance(value, dict):
+                        # Handle operators like $gte, $lte
+                        for op, op_val in value.items():
+                            if op == "$gte":
+                                conditions.append(
+                                    models.FieldCondition(
+                                        key=key,
+                                        match=models.MatchValue(gte=op_val)
+                                    )
+                                )
+                            elif op == "$lte" or op == "$lt":
+                                conditions.append(
+                                    models.FieldCondition(
+                                        key=key,
+                                        match=models.MatchValue(lte=op_val)
+                                    )
+                                )
+                    else:
+                        # Direct equality match
+                        conditions.append(
+                            models.FieldCondition(
+                                key=key,
+                                match=models.MatchValue(value=value)
+                            )
+                        )
+                if conditions:
+                    query_filter = models.Filter(
+                        must=conditions
+                    )
+            
             results = self.client.search(
                 collection_name=collection,
                 query_vector=query_vector,
+                query_filter=query_filter,
                 limit=limit,
                 score_threshold=score_threshold
             )
@@ -199,6 +245,7 @@ class VectorDatabaseManager:
                 "score": hit.score,
                 "payload": hit.payload
             } for hit in results]
+            
         except Exception as e:
             logger.error(f"Error during search in collection {collection}: {str(e)}")
             return []
@@ -244,3 +291,44 @@ class VectorDatabaseManager:
         except Exception as e:
             logger.error(f"Error getting stats: {str(e)}")
             return {}
+
+    def check_connection(self) -> bool:
+        """Check if the connection to Qdrant is healthy"""
+        try:
+            # Try to get collection info as a health check
+            self.client.get_collections()
+            return True
+        except Exception as e:
+            logger.error(f"Connection check failed: {str(e)}")
+            return False
+
+    def cleanup_old_vectors(self, older_than_days: int = 30) -> int:
+        """Delete vectors older than specified days"""
+        try:
+            cutoff_date = (datetime.now() - timedelta(days=older_than_days)).isoformat()
+            
+            # Find points to delete
+            points_to_delete = self.search(
+                query_vector=None,
+                metadata_filters={
+                    "published_date": {
+                        "$lt": cutoff_date
+                    }
+                },
+                limit=1000  # Batch size
+            )
+            
+            if not points_to_delete:
+                return 0
+                
+            # Delete points
+            deleted_count = 0
+            for point in points_to_delete:
+                if self.delete(point["id"]):
+                    deleted_count += 1
+                    
+            return deleted_count
+            
+        except Exception as e:
+            logger.error(f"Error during cleanup: {str(e)}")
+            return 0

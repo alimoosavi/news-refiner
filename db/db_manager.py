@@ -133,18 +133,9 @@ class DBManager:
             return news_items
 
     def mark_news_as_processed(self, news_ids: List[int]) -> None:
-        """
-        Mark multiple news articles as processed
-
-        Args:
-            news_ids: List of news article IDs to mark as processed
-
-        Raises:
-            SQLAlchemyError: If database update fails
-        """
         if not news_ids:
             return
-
+    
         with self.get_session() as session:
             try:
                 session.query(RawNews) \

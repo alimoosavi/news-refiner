@@ -35,17 +35,24 @@ class Reranker:
         self.parser = StructuredOutputParser.from_response_schemas([self.reranking_schema])
         
         self.reranking_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a Persian news search expert. Rerank the given search results based on their relevance to the query.
+            ("system", """You are a Persian news search expert. Rerank and filter the given search results based on their relevance to the query.
             
             Follow these rules:
-            1. Analyze semantic relevance between query and content
-            2. Consider recency and source credibility
-            3. Evaluate content quality and completeness
-            4. Score each result from 0.0 to 1.0
-            5. Provide a brief explanation for each ranking
+            1. First, evaluate if each result is actually relevant to the query:
+               - Score 0.0 for completely irrelevant content
+               - Only keep results that contain information related to the query
+               - Filter out results that just mention query terms without meaningful context
+            2. For relevant results:
+               - Analyze semantic relevance between query and content
+               - Consider recency and source credibility
+               - Evaluate content quality and completeness
+               - Score each result from 0.1 to 1.0
+            3. Provide clear explanation for:
+               - Why a result was considered relevant or irrelevant
+               - The factors that influenced the ranking score
             
             For each result, return:
-            - score: float between 0.0 and 1.0
+            - score: float between 0.0 and 1.0 (0.0 means irrelevant and will be filtered out)
             - relevance_explanation: brief explanation in Persian
             
             {format_instructions}
@@ -84,17 +91,19 @@ class Reranker:
             response = await self.llm.apredict_messages(formatted_prompt)
             parsed = self.parser.parse(response.content)
             
-            # Create ranked results
+            # Create ranked results and filter out irrelevant ones (score = 0)
             ranked_results = []
             for rank_info, original_result in zip(parsed["reranked_results"], results):
-                ranked_results.append(
-                    RankedResult(
-                        content=original_result["content"],
-                        score=float(rank_info["score"]),
-                        relevance_explanation=rank_info["relevance_explanation"],
-                        metadata=original_result["metadata"]
+                score = float(rank_info["score"])
+                if score > 0:  # Only include relevant results
+                    ranked_results.append(
+                        RankedResult(
+                            content=original_result["content"],
+                            score=score,
+                            relevance_explanation=rank_info["relevance_explanation"],
+                            metadata=original_result["metadata"]
+                        )
                     )
-                )
             
             # Sort by score and limit results
             ranked_results.sort(key=lambda x: x.score, reverse=True)

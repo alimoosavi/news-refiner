@@ -1,15 +1,14 @@
-from datetime import timedelta
-import logging
-from celery import Celery
-from celery.schedules import crontab
-from config import config
-from cache.cache_manager import CacheManager
-from db.db_manager import DBManager
-from collectors.concurrent_telegram_collector import ConcurrentTelegramChannelsCollector
 import asyncio
+import logging
+from datetime import timedelta
 
-# Celery application setup
-app = Celery('news_collector', broker=config.celery.broker_url)
+from cache.cache_manager import CacheManager
+from celery_app import app
+from collectors.concurrent_telegram_collector import ConcurrentTelegramChannelsCollector
+from config import config
+from db.db_manager import DBManager
+
+
 app.conf.update(
     task_serializer='json',
     accept_content=['json'],
@@ -90,15 +89,11 @@ def collect_news(self):
             countdown=60,
             max_retries=config.collector.max_retries
         )
-    # finally:
-    #     if db_manager:  # Proper connection cleanup
-    #         db_manager.close_connections()
 
 
 def start_worker():
     """Entry point for collectors worker process"""
     app.worker_main()
-
 
 if __name__ == '__main__':
     start_worker()

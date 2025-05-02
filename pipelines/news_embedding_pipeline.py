@@ -1,11 +1,14 @@
 import logging
 from typing import List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 
 from db.db_manager import DBManager, RawNews
 from config import config
 from processors.news_preprocessor import NewsPreprocessor
 from vector_database.vector_database import VectorDatabaseManager
+from graph_database.graph_database import GraphDatabaseManager
 from langchain_openai import OpenAIEmbeddings
 
 logger = logging.getLogger(__name__)
@@ -15,13 +18,19 @@ class NewsProcessingPipeline:
             self,
             db_manager: DBManager,
             vector_db_manager: VectorDatabaseManager,
+            graph_db_manager: GraphDatabaseManager,
             preprocessor: NewsPreprocessor,
-            batch_size: int = 25
+            batch_size: int = 25,
+            similarity_threshold: float = 0.7,
+            temporal_window_hours: int = 72
     ):
         self.db_manager = db_manager
         self.vector_db = vector_db_manager
+        self.graph_db = graph_db_manager
         self.preprocessor = preprocessor
         self.batch_size = batch_size
+        self.similarity_threshold = similarity_threshold
+        self.temporal_window_hours = temporal_window_hours
         
         self.embeddings = OpenAIEmbeddings(
             model="text-embedding-ada-002",
@@ -29,22 +38,25 @@ class NewsProcessingPipeline:
         )
 
     async def _process_news_item(self, item: RawNews) -> bool:
-        """Process a single news item"""
+        """Process a single news item and build graph connections"""
         try:
-            # Preprocess the news
+            # Process chunks as before
             chunks = await self.preprocessor.process_news(item.content)
             if not chunks:
                 return False
 
-            # Filter only meaningful chunks
             meaningful_chunks = [chunk for chunk in chunks if chunk.is_meaningful]
             if not meaningful_chunks:
                 return False
 
-            # Process meaningful chunks
+            # Store chunks and build graph
+            chunk_embeddings = []
+            chunk_ids = []
+            
             for chunk in meaningful_chunks:
                 # Generate embedding
                 embedding = await self.embeddings.aembed_query(chunk.content)
+                chunk_embeddings.append(embedding)
                 
                 # Store in vector database
                 metadata = {
@@ -56,16 +68,80 @@ class NewsProcessingPipeline:
                     "website_link": chunk.website_link
                 }
                 
-                self.vector_db.store(
+                chunk_id = self.vector_db.store(
                     vector=embedding,
                     payload=metadata
                 )
+                chunk_ids.append(chunk_id)
+                
+                # Add to graph database
+                self.graph_db.add_chunk(
+                    chunk_id=chunk_id,
+                    content=chunk.content,
+                    metadata=metadata
+                )
+                
+                # Add entity edges
+                self.graph_db.add_entity_edges(chunk_id, chunk.keywords)
+
+            # Build semantic similarity edges
+            embeddings_array = np.array(chunk_embeddings)
+            similarities = cosine_similarity(embeddings_array)
+            
+            for i in range(len(chunk_ids)):
+                for j in range(i + 1, len(chunk_ids)):
+                    similarity = similarities[i][j]
+                    if similarity >= self.similarity_threshold:
+                        self.graph_db.add_semantic_edge(
+                            chunk_ids[i],
+                            chunk_ids[j],
+                            float(similarity)
+                        )
+
+            # Build temporal edges with recent chunks
+            recent_chunks = self._get_recent_chunks(
+                item.published_date,
+                exclude_ids=chunk_ids
+            )
+            
+            for recent in recent_chunks:
+                time_diff = (item.published_date - recent["published_date"]).total_seconds() / 3600
+                if time_diff <= self.temporal_window_hours:
+                    for chunk_id in chunk_ids:
+                        self.graph_db.add_temporal_edge(
+                            chunk_id,
+                            recent["id"],
+                            time_diff
+                        )
             
             return True
             
         except Exception as e:
             logger.error(f"Failed to process news {item.id}: {str(e)}")
             return False
+
+    def _get_recent_chunks(
+            self,
+            current_date: datetime,
+            exclude_ids: List[str],
+            limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Get recently processed chunks for temporal edge building"""
+        start_date = current_date - timedelta(hours=self.temporal_window_hours)
+        
+        # Use vector database's search capabilities to find recent chunks
+        results = self.vector_db.search(
+            query_vector=None,  # No semantic search needed
+            metadata_filters={
+                "published_date": {
+                    "$gte": start_date.isoformat(),
+                    "$lt": current_date.isoformat()
+                }
+            },
+            limit=limit
+        )
+        
+        return [r for r in results if str(r["id"]) not in exclude_ids]
 
     async def run(self, limit: int = 100) -> Dict[str, Any]:
         """Run the pipeline"""
@@ -98,7 +174,7 @@ class NewsProcessingPipeline:
                 except Exception as e:
                     logger.error(f"Failed to process news {item.id}: {str(e)}")
                     total_stats["failed"] += 1
-
+    
             # Mark successfully processed items
             if processed_ids:
                 self.db_manager.mark_news_as_processed(list(processed_ids))

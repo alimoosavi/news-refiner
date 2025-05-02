@@ -132,7 +132,17 @@ class RerankerConfig(BaseSettings):
     max_tokens: int = Field(1000, ge=100, le=4000)
     top_k: int = Field(5, ge=1, le=20)
 
-# Update ConfigManager
+class Neo4jConfig(BaseSettings):
+    """Neo4j database configuration"""
+    model_config = SettingsConfigDict(env_prefix="NEO4J_")
+
+    uri: str = Field("bolt://localhost:7687", min_length=3)
+    user: str = Field("neo4j", min_length=1)
+    password: str = Field(..., min_length=1)  # Required password
+    database: str = Field("neo4j", min_length=1)
+    max_connection_pool_size: int = Field(50, ge=1, le=1000)
+    connection_timeout: int = Field(30, ge=1, le=300)
+
 class ConfigManager(BaseSettings):
     """Main configuration aggregator"""
     model_config = SettingsConfigDict(
@@ -144,6 +154,7 @@ class ConfigManager(BaseSettings):
     collector: CollectorConfig = Field(default_factory=CollectorConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+    graph_db: Neo4jConfig = Field(default_factory=Neo4jConfig)  # Rename neo4j to graph_db
     crawler: NewsCrawlerConfig = Field(default_factory=NewsCrawlerConfig)
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     celery: CeleryConfig = Field(default_factory=CeleryConfig)
