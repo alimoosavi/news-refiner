@@ -69,44 +69,44 @@ services:
       - neo4j_import:/var/lib/neo4j/import
       - neo4j_plugins:/plugins
 
-  # celery_worker:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile.celery
-  #   container_name: news-celery-worker
-  #   command: celery -A celery_app worker --loglevel=info
-  #   environment:
-  #     - CELERY_BROKER_URL=redis://cache:6379/0
-  #     - CELERY_RESULT_BACKEND=redis://cache:6379/1
-  #     - DB_HOST=db
-  #     - DB_PORT=5432
-  #     - VECTOR_DB_HOST=vector_db
-  #     - VECTOR_DB_PORT=6333
-  #     - NEO4J_URI=bolt://neo4j:7687
-  #   volumes:
-  #     - .:/app
-  #     - celery_logs:/var/log/celery
-  #   depends_on:
-  #     - db
-  #     - cache
-  #     - vector_db
-  #     - neo4j
+  celery_worker:
+     build:
+       context: .
+       dockerfile: Dockerfile.celery
+     container_name: news-celery-worker
+     command: celery -A celery_app worker --loglevel=info
+     environment:
+       - CELERY_BROKER_URL=redis://cache:6379/0
+       - CELERY_RESULT_BACKEND=redis://cache:6379/1
+       - DB_HOST=db
+       - DB_PORT=5432
+       - VECTOR_DB_HOST=vector_db
+       - VECTOR_DB_PORT=6333
+       - NEO4J_URI=bolt://neo4j:7687
+     volumes:
+       - .:/app
+       - celery_logs:/var/log/celery
+     depends_on:
+       - db
+       - cache
+       - vector_db
+       - neo4j
 
-  # celery_beat:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile.celery
-  #   container_name: news-celery-beat
-  #   command: celery -A celery_app beat --loglevel=info
-  #   environment:
-  #     - CELERY_BROKER_URL=redis://cache:6379/0
-  #     - CELERY_RESULT_BACKEND=redis://cache:6379/1
-  #   volumes:
-  #     - .:/app
-  #     - celery_logs:/var/log/celery
-  #   depends_on:
-  #     - celery_worker
-  #     - cache
+  celery_beat:
+     build:
+       context: .
+       dockerfile: Dockerfile.celery
+     container_name: news-celery-beat
+     command: celery -A celery_app beat --loglevel=info
+     environment:
+       - CELERY_BROKER_URL=redis://cache:6379/0
+       - CELERY_RESULT_BACKEND=redis://cache:6379/1
+     volumes:
+       - .:/app
+       - celery_logs:/var/log/celery
+     depends_on:
+       - celery_worker
+       - cache
 
 volumes:
   postgres_data:
