@@ -1,5 +1,6 @@
 import logging
 import time
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 
 from langchain_openai import OpenAIEmbeddings
@@ -12,6 +13,10 @@ logger = logging.getLogger(__name__)
 from .reranker import Reranker
 
 class Retriever:
+    # Time windows in days for progressive search
+    TIME_WINDOWS = [(0, 2), (2, 7), (7, 30)]
+    MIN_RELEVANT_RESULTS = 3  # Minimum number of relevant results before stopping
+
     def __init__(
             self,
             vector_db_manager: VectorDatabaseManager,
@@ -40,40 +45,52 @@ class Retriever:
             threshold: Optional[float] = None,
             metadata_filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        """Search using vector database"""
+        """Search using vector database with time window progression"""
         try:
-            # Get initial results from vector search
+            # Process query and generate embedding
             query_chunk = await self.query_preprocessor.process_query(query)
             if not query_chunk or not query_chunk.keywords:
                 logger.warning("No valid query chunk or keywords generated")
                 return []
 
             query_embedding = await self.embeddings.aembed_query(query_chunk.content)
-            results = self.vector_db.hybrid_search(
-                query_vector=query_embedding,
-                keywords=query_chunk.keywords,
-                limit=top_k or self.default_top_k,
-                score_threshold=threshold or self.similarity_threshold
-            )
-
-            if not results:
-                return []
-
-            # Apply metadata filters if provided
-            if metadata_filters:
-                results = self._apply_metadata_filters(results, metadata_filters)
-
-            # Format and rerank results
-            formatted_results = self._format_results(results)
-            if formatted_results:
-                reranked_results = await self.reranker.rerank(
-                    query=query,
-                    results=formatted_results,
-                    top_k=top_k or self.default_top_k
+            
+            # Progressive search through time windows
+            current_time = datetime.now()
+            all_results = []
+            
+            for start_days, end_days in self.TIME_WINDOWS:
+                # Calculate time range
+                end_date = current_time - timedelta(days=start_days)
+                start_date = current_time - timedelta(days=end_days)
+                
+                # Search in current time window
+                results = self.vector_db.time_range_vector_search(
+                    query_vector=query_embedding,
+                    time_range=(start_date.isoformat(), end_date.isoformat()),
+                    keywords=query_chunk.keywords,
+                    limit=top_k or self.default_top_k,
+                    score_threshold=threshold or self.similarity_threshold
                 )
-                return reranked_results
-
-            return formatted_results
+                
+                if results:
+                    # Format and rerank results
+                    formatted_results = self._format_results(results)
+                    if formatted_results:
+                        reranked_results = await self.reranker.rerank(
+                            query=query,
+                            results=formatted_results,
+                            top_k=top_k or self.default_top_k
+                        )
+                        
+                        # Add to accumulated results
+                        all_results.extend(reranked_results)
+                        
+                        # Check if we have enough relevant results
+                        if len(reranked_results) >= self.MIN_RELEVANT_RESULTS:
+                            break
+            
+            return all_results
 
         except Exception as e:
             logger.error(f"Search failed: {str(e)}")

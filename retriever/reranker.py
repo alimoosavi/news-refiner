@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 class RankedResult:
     content: str
     score: float
-    relevance_explanation: str
     metadata: Dict[str, Any]
 
 class Reranker:
@@ -28,7 +27,7 @@ class Reranker:
         # Schema for reranking output
         self.reranking_schema = ResponseSchema(
             name="reranked_results",
-            description="List of reranked results with scores and explanations",
+            description="List of reranked results with scores",
             type="list[dict]"
         )
         
@@ -37,23 +36,28 @@ class Reranker:
         self.reranking_prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a Persian news search expert. Rerank and filter the given search results based on their relevance to the query.
             
-            Follow these rules:
+            Follow these rules STRICTLY:
             1. First, evaluate if each result is actually relevant to the query:
                - Score 0.0 for completely irrelevant content
-               - Only keep results that contain information related to the query
-               - Filter out results that just mention query terms without meaningful context
+               - Score 0.0 for content that only mentions query terms without meaningful context
+               - Score 0.0 for outdated or superseded information
+               - Only keep results that provide substantial, relevant information
+               
             2. For relevant results:
-               - Analyze semantic relevance between query and content
-               - Consider recency and source credibility
-               - Evaluate content quality and completeness
-               - Score each result from 0.1 to 1.0
-            3. Provide clear explanation for:
-               - Why a result was considered relevant or irrelevant
-               - The factors that influenced the ranking score
+               - Score 0.9-1.0: Perfect match with comprehensive information
+               - Score 0.7-0.8: Good match with significant relevant details
+               - Score 0.4-0.6: Moderate match with some relevant information
+               - Score 0.1-0.3: Minimal relevance or incomplete information
+               - Score 0.0: No meaningful relevance (will be filtered out)
+            
+            3. Consider these factors for scoring:
+               - Direct relevance to the query topic
+               - Information completeness and depth
+               - Information recency and timeliness
+               - Source credibility and reliability
             
             For each result, return:
             - score: float between 0.0 and 1.0 (0.0 means irrelevant and will be filtered out)
-            - relevance_explanation: brief explanation in Persian
             
             {format_instructions}
             """),
@@ -100,7 +104,6 @@ class Reranker:
                         RankedResult(
                             content=original_result["content"],
                             score=score,
-                            relevance_explanation=rank_info["relevance_explanation"],
                             metadata=original_result["metadata"]
                         )
                     )

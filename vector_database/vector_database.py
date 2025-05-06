@@ -1,10 +1,14 @@
-from typing import List, Dict, Any, Optional
 import logging
+import time
+from datetime import timedelta, datetime
+from typing import List, Dict, Any, Optional
+
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from qdrant_client.http.models import Distance, VectorParams
 
 logger = logging.getLogger(__name__)
+
 
 class VectorDatabaseManager:
     # Add constant for collection name
@@ -19,7 +23,7 @@ class VectorDatabaseManager:
         self.client = QdrantClient(host=host, port=port)
         self.collection_name = self.DEFAULT_COLLECTION  # Always use default collection
         self.embedding_dim = embedding_dim
-        
+
         # Initialize collection
         self._initialize()
 
@@ -28,39 +32,39 @@ class VectorDatabaseManager:
         try:
             collections = self.client.get_collections().collections
             exists = any(c.name == self.collection_name for c in collections)
-            
+
             if not exists:
                 # Create collection with payload indexes
                 self.client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=VectorParams(size=self.embedding_dim, distance=Distance.COSINE)
                 )
-                
+
                 # Create payload indexes
                 self.client.create_payload_index(
                     collection_name=self.collection_name,
                     field_name="keywords",
                     field_schema="keyword"
                 )
-                
+
                 self.client.create_payload_index(
                     collection_name=self.collection_name,
                     field_name="content",
                     field_schema="text"
                 )
-                
+
                 logger.info(f"Created collection: {self.collection_name}")
-            
+
         except Exception as e:
             logger.error(f"Error initializing Qdrant: {str(e)}")
             raise
 
     def hybrid_search(
-        self,
-        query_vector: List[float],
-        keywords: List[str],
-        limit: int = 5,
-        score_threshold: float = 0.7
+            self,
+            query_vector: List[float],
+            keywords: List[str],
+            limit: int = 5,
+            score_threshold: float = 0.7
     ) -> List[Dict[str, Any]]:
         """Perform hybrid search using both vector similarity and keyword matching"""
         try:
@@ -78,13 +82,13 @@ class VectorDatabaseManager:
                 limit=limit,
                 score_threshold=score_threshold
             )
-            
+
             return [{
                 "id": str(hit.id),
                 "score": hit.score,
                 "payload": hit.payload
             } for hit in results]
-            
+
         except Exception as e:
             logger.error(f"Error during hybrid search: {str(e)}")
             return []
@@ -99,7 +103,7 @@ class VectorDatabaseManager:
         try:
             collections = self.client.get_collections().collections
             exists = any(c.name == collection_name for c in collections)
-            
+
             if not exists:
                 self.client.create_collection(
                     collection_name=collection_name,
@@ -108,7 +112,7 @@ class VectorDatabaseManager:
                 logger.info(f"Created new collection: {collection_name}")
             else:
                 logger.info(f"Using existing collection: {collection_name}")
-                
+
         except Exception as e:
             logger.error(f"Error ensuring collection {collection_name}: {str(e)}")
             raise
@@ -117,11 +121,11 @@ class VectorDatabaseManager:
         """Store a vector in the default collection"""
         max_retries = 3
         retry_delay = 1
-        
+
         for attempt in range(max_retries):
             try:
                 point_id = self.client.count(collection_name=self.collection_name).count
-                
+
                 self.client.upsert(
                     collection_name=self.collection_name,
                     points=[
@@ -162,7 +166,7 @@ class VectorDatabaseManager:
                 )
                 for i, (vector, payload) in enumerate(zip(vectors, payloads))
             ]
-            
+
             self.client.upsert(
                 collection_name=self.collection_name,
                 points=points
@@ -173,12 +177,12 @@ class VectorDatabaseManager:
             return []
 
     def search(
-        self,
-        query_vector: List[float],
-        collection_name: Optional[str] = None,
-        limit: int = 5,
-        score_threshold: float = 0.7,
-        metadata_filters: Optional[Dict[str, Any]] = None
+            self,
+            query_vector: List[float],
+            collection_name: Optional[str] = None,
+            limit: int = 5,
+            score_threshold: float = 0.7,
+            metadata_filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
         Search for similar vectors
@@ -196,7 +200,7 @@ class VectorDatabaseManager:
         try:
             # Use specified collection or default
             collection = collection_name or self.collection_name
-            
+
             # Create filter if metadata filters are provided
             query_filter = None
             if metadata_filters:
@@ -231,7 +235,7 @@ class VectorDatabaseManager:
                     query_filter = models.Filter(
                         must=conditions
                     )
-            
+
             results = self.client.search(
                 collection_name=collection,
                 query_vector=query_vector,
@@ -239,13 +243,13 @@ class VectorDatabaseManager:
                 limit=limit,
                 score_threshold=score_threshold
             )
-            
+
             return [{
                 "id": str(hit.id),
                 "score": hit.score,
                 "payload": hit.payload
             } for hit in results]
-            
+
         except Exception as e:
             logger.error(f"Error during search in collection {collection}: {str(e)}")
             return []
@@ -306,7 +310,7 @@ class VectorDatabaseManager:
         """Delete vectors older than specified days"""
         try:
             cutoff_date = (datetime.now() - timedelta(days=older_than_days)).isoformat()
-            
+
             # Find points to delete
             points_to_delete = self.search(
                 query_vector=None,
@@ -317,18 +321,83 @@ class VectorDatabaseManager:
                 },
                 limit=1000  # Batch size
             )
-            
+
             if not points_to_delete:
                 return 0
-                
+
             # Delete points
             deleted_count = 0
             for point in points_to_delete:
                 if self.delete(point["id"]):
                     deleted_count += 1
-                    
+
             return deleted_count
-            
+
         except Exception as e:
             logger.error(f"Error during cleanup: {str(e)}")
             return 0
+
+    def time_range_vector_search(
+        self,
+        query_vector: List[float],
+        time_range: tuple[str, str],
+        keywords: List[str],
+        limit: int = 5,
+        score_threshold: float = 0.7
+    ) -> List[Dict[str, Any]]:
+        """
+        Search for similar vectors within a specific time range
+
+        Args:
+            query_vector: The query embedding vector
+            time_range: Tuple of (start_time, end_time) in ISO format
+            keywords: List of keywords for filtering
+            limit: Number of results to return
+            score_threshold: Minimum similarity score threshold
+
+        Returns:
+            List of dictionaries containing search results with scores and payloads
+        """
+        try:
+            start_time, end_time = time_range
+            
+            # Convert ISO format strings to timestamps
+            start_timestamp = datetime.fromisoformat(start_time).timestamp()
+            end_timestamp = datetime.fromisoformat(end_time).timestamp()
+            
+            # Create time range filter combined with keyword matching
+            query_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="published_date",
+                        match=models.Range(
+                            gte=start_timestamp,
+                            lte=end_timestamp
+                        )
+                    )
+                ],
+                should=[
+                    models.FieldCondition(
+                        key="keywords",
+                        match=models.MatchAny(any=keywords)
+                    )
+                ]
+            )
+
+            results = self.client.search(
+                collection_name=self.collection_name,
+                query_vector=query_vector,
+                query_filter=query_filter,
+                limit=limit,
+                score_threshold=score_threshold
+            )
+
+            return [{
+                "id": str(hit.id),
+                "score": hit.score,
+                "payload": hit.payload
+            } for hit in results]
+
+        except Exception as e:
+            logger.error(f"Error during time range vector search: {str(e)}")
+            return []
