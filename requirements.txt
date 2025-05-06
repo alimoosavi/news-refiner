@@ -24,3 +24,4 @@ qdrant-client
 fastapi
 uvicorn
 neo4j
+langchain-openai
