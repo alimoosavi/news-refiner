@@ -184,45 +184,56 @@ class VectorDatabaseManager:
             score_threshold: float = 0.7,
             metadata_filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        """
-        Search for similar vectors
-
-        Args:
-            query_vector: The query embedding vector
-            collection_name: Optional name of collection to search in
-            limit: Number of results to return
-            score_threshold: Minimum similarity score threshold
-            metadata_filters: Optional filters for metadata fields
-
-        Returns:
-            List of dictionaries containing search results with scores and payloads
-        """
         try:
-            # Use specified collection or default
             collection = collection_name or self.collection_name
-
-            # Create filter if metadata filters are provided
             query_filter = None
+            
             if metadata_filters:
                 conditions = []
                 for key, value in metadata_filters.items():
                     if isinstance(value, dict):
-                        # Handle operators like $gte, $lte
                         for op, op_val in value.items():
-                            if op == "$gte":
-                                conditions.append(
-                                    models.FieldCondition(
-                                        key=key,
-                                        match=models.MatchValue(gte=op_val)
+                            if isinstance(op_val, str) and 'T' in op_val:  # Check if it's a datetime string
+                                # Convert ISO datetime string to timestamp
+                                timestamp = datetime.fromisoformat(op_val.replace('Z', '+00:00')).timestamp()
+                                if op == "$gte":
+                                    conditions.append(
+                                        models.FieldCondition(
+                                            key=key,
+                                            match=models.Range(
+                                                gte=timestamp
+                                            )
+                                        )
                                     )
-                                )
-                            elif op == "$lte" or op == "$lt":
-                                conditions.append(
-                                    models.FieldCondition(
-                                        key=key,
-                                        match=models.MatchValue(lte=op_val)
+                                elif op == "$lte" or op == "$lt":
+                                    conditions.append(
+                                        models.FieldCondition(
+                                            key=key,
+                                            match=models.Range(
+                                                lte=timestamp
+                                            )
+                                        )
                                     )
-                                )
+                            else:
+                                # Handle non-datetime values
+                                if op == "$gte":
+                                    conditions.append(
+                                        models.FieldCondition(
+                                            key=key,
+                                            match=models.Range(
+                                                gte=op_val
+                                            )
+                                        )
+                                    )
+                                elif op == "$lte" or op == "$lt":
+                                    conditions.append(
+                                        models.FieldCondition(
+                                            key=key,
+                                            match=models.Range(
+                                                lte=op_val
+                                            )
+                                        )
+                                    )
                     else:
                         # Direct equality match
                         conditions.append(
@@ -243,13 +254,13 @@ class VectorDatabaseManager:
                 limit=limit,
                 score_threshold=score_threshold
             )
-
+    
             return [{
                 "id": str(hit.id),
                 "score": hit.score,
                 "payload": hit.payload
             } for hit in results]
-
+    
         except Exception as e:
             logger.error(f"Error during search in collection {collection}: {str(e)}")
             return []

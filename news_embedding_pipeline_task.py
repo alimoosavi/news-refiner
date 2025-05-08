@@ -48,7 +48,6 @@ def process_news_embeddings(self, limit: int = 10):
         pipeline = NewsProcessingPipeline(
             db_manager=db_manager,
             vector_db_manager=vector_database_manager,
-            graph_db_manager=graph_database_manager,
             preprocessor=preprocessor,
             batch_size=config.processing.batch_size
         )

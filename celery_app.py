@@ -22,13 +22,17 @@ app.conf.update(
     result_expires=3600,
     worker_concurrency=config.celery.concurrency,
     task_time_limit=config.celery.task_time_limit,
-    worker_pool='prefork',  # Use 'prefork' pool in Docker
+    worker_pool='solo',  # Changed from 'prefork' to 'solo' for macOS compatibility
     beat_schedule={
         'process-news': {
             'task': 'news_embedding_pipeline_task.process_news_embeddings',
             'schedule': timedelta(minutes=1),
             'kwargs': {'limit': config.processing.batch_size}
-        }
+        },
+        'collect-news': {
+            'task': 'news_collector_task.collect_news',
+            'schedule': timedelta(minutes=1)
+        },
     }
 )
 

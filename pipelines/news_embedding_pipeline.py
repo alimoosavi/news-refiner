@@ -8,7 +8,6 @@ from db.db_manager import DBManager, RawNews
 from config import config
 from processors.news_preprocessor import NewsPreprocessor
 from vector_database.vector_database import VectorDatabaseManager
-from graph_database.graph_database import GraphDatabaseManager
 from langchain_openai import OpenAIEmbeddings
 
 logger = logging.getLogger(__name__)
@@ -18,7 +17,6 @@ class NewsProcessingPipeline:
             self,
             db_manager: DBManager,
             vector_db_manager: VectorDatabaseManager,
-            graph_db_manager: GraphDatabaseManager,
             preprocessor: NewsPreprocessor,
             batch_size: int = 25,
             similarity_threshold: float = 0.7,
@@ -26,7 +24,6 @@ class NewsProcessingPipeline:
     ):
         self.db_manager = db_manager
         self.vector_db = vector_db_manager
-        self.graph_db = graph_db_manager
         self.preprocessor = preprocessor
         self.batch_size = batch_size
         self.similarity_threshold = similarity_threshold
@@ -38,9 +35,8 @@ class NewsProcessingPipeline:
         )
 
     async def _process_news_item(self, item: RawNews) -> bool:
-        """Process a single news item and build graph connections"""
+        """Process a single news item"""
         try:
-            # Process chunks as before
             chunks = await self.preprocessor.process_news(item.content)
             if not chunks:
                 return False
@@ -49,7 +45,7 @@ class NewsProcessingPipeline:
             if not meaningful_chunks:
                 return False
 
-            # Store chunks and build graph
+            # Store chunks in vector database
             chunk_embeddings = []
             chunk_ids = []
             
@@ -73,18 +69,8 @@ class NewsProcessingPipeline:
                     payload=metadata
                 )
                 chunk_ids.append(chunk_id)
-                
-                # Add to graph database
-                self.graph_db.add_chunk(
-                    chunk_id=chunk_id,
-                    content=chunk.content,
-                    metadata=metadata
-                )
-                
-                # Add entity edges
-                self.graph_db.add_entity_edges(chunk_id, chunk.keywords)
 
-            # Build semantic similarity edges
+            # Build semantic similarity edges in vector database metadata
             embeddings_array = np.array(chunk_embeddings)
             similarities = cosine_similarity(embeddings_array)
             
@@ -92,26 +78,14 @@ class NewsProcessingPipeline:
                 for j in range(i + 1, len(chunk_ids)):
                     similarity = similarities[i][j]
                     if similarity >= self.similarity_threshold:
-                        self.graph_db.add_semantic_edge(
-                            chunk_ids[i],
-                            chunk_ids[j],
-                            float(similarity)
-                        )
-
-            # Build temporal edges with recent chunks
-            recent_chunks = self._get_recent_chunks(
-                item.published_date,
-                exclude_ids=chunk_ids
-            )
-            
-            for recent in recent_chunks:
-                time_diff = (item.published_date - recent["published_date"]).total_seconds() / 3600
-                if time_diff <= self.temporal_window_hours:
-                    for chunk_id in chunk_ids:
-                        self.graph_db.add_temporal_edge(
-                            chunk_id,
-                            recent["id"],
-                            time_diff
+                        # Store similarity information in vector database metadata
+                        metadata = {
+                            "related_chunk_id": chunk_ids[j],
+                            "similarity_score": float(similarity)
+                        }
+                        self.vector_db.store(
+                            vector=chunk_embeddings[i],
+                            payload=metadata
                         )
             
             return True
@@ -126,7 +100,7 @@ class NewsProcessingPipeline:
             exclude_ids: List[str],
             limit: int = 100
     ) -> List[Dict[str, Any]]:
-        """Get recently processed chunks for temporal edge building"""
+        """Get recently processed chunks"""
         start_date = current_date - timedelta(hours=self.temporal_window_hours)
         
         # Use vector database's search capabilities to find recent chunks

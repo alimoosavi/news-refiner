@@ -8,21 +8,8 @@ from collectors.concurrent_telegram_collector import ConcurrentTelegramChannelsC
 from config import config
 from db.db_manager import DBManager
 
-
-app.conf.update(
-    task_serializer='json',
-    accept_content=['json'],
-    result_expires=3600,
-    worker_concurrency=1,
-    task_time_limit=config.celery.task_time_limit,
-    # Add beat schedule configuration
-    beat_schedule={
-        'collect-news-every-interval': {
-            'task': 'news_collector_task.collect_news',
-            'schedule': timedelta(minutes=1),  # or use config.processing.interval if defined in minutes
-        }
-    }
-)
+# Remove duplicate app.conf.update configuration here
+# The configuration should only be in celery_app.py
 
 
 async def fetch_news(db_manager, cache_manager, logger):

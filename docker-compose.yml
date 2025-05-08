@@ -75,17 +75,12 @@ services:
        dockerfile: Dockerfile.celery
      container_name: news-celery-worker
      command: celery -A celery_app worker --loglevel=info
-     environment:
-       - CELERY_BROKER_URL=redis://cache:6379/0
-       - CELERY_RESULT_BACKEND=redis://cache:6379/1
-       - DB_HOST=db
-       - DB_PORT=5432
-       - VECTOR_DB_HOST=vector_db
-       - VECTOR_DB_PORT=6333
-       - NEO4J_URI=bolt://neo4j:7687
+     env_file:
+       - .docker.env
      volumes:
        - .:/app
        - celery_logs:/var/log/celery
+       - ./last-published-data.json:/app/last-published-data.json
      depends_on:
        - db
        - cache
@@ -98,12 +93,12 @@ services:
        dockerfile: Dockerfile.celery
      container_name: news-celery-beat
      command: celery -A celery_app beat --loglevel=info
-     environment:
-       - CELERY_BROKER_URL=redis://cache:6379/0
-       - CELERY_RESULT_BACKEND=redis://cache:6379/1
+     env_file:
+       - .docker.env
      volumes:
        - .:/app
        - celery_logs:/var/log/celery
+       - ./last-published-data.json:/app/last-published-data.json
      depends_on:
        - celery_worker
        - cache
