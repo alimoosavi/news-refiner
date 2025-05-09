@@ -381,7 +381,7 @@ class VectorDatabaseManager:
                 must=[
                     models.FieldCondition(
                         key="published_date",
-                        match=models.Range(
+                        range=models.Range(
                             gte=start_timestamp,
                             lte=end_timestamp
                         )
@@ -392,7 +392,7 @@ class VectorDatabaseManager:
                         key="keywords",
                         match=models.MatchAny(any=keywords)
                     )
-                ]
+                ] if keywords else None
             )
 
             results = self.client.search(
