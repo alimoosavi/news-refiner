@@ -363,7 +363,7 @@ class VectorDatabaseManager:
             query_vector: The query embedding vector
             time_range: Tuple of (start_time, end_time) in ISO format
             keywords: List of keywords for filtering
-            limit: Number of results to return
+            limit: Number of top results to return (top_k)
             score_threshold: Minimum similarity score threshold
 
         Returns:

@@ -45,7 +45,7 @@ class Retriever:
             threshold: Optional[float] = None,
             metadata_filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        """Search using vector database with time window progression"""
+        """Search using vector database with hybrid search"""
         try:
             # Process query and generate embedding
             query_chunk = await self.query_preprocessor.process_query(query)
@@ -55,42 +55,26 @@ class Retriever:
 
             query_embedding = await self.embeddings.aembed_query(query_chunk.content)
             
-            # Progressive search through time windows
-            current_time = datetime.now()
-            all_results = []
+            # Perform hybrid search
+            results = self.vector_db.hybrid_search(
+                query_vector=query_embedding,
+                keywords=query_chunk.keywords,
+                limit=top_k or self.default_top_k,
+                score_threshold=threshold or self.similarity_threshold
+            )
             
-            for start_days, end_days in self.TIME_WINDOWS:
-                # Calculate time range
-                end_date = current_time - timedelta(days=start_days)
-                start_date = current_time - timedelta(days=end_days)
-                
-                # Search in current time window
-                results = self.vector_db.time_range_vector_search(
-                    query_vector=query_embedding,
-                    time_range=(start_date.isoformat(), end_date.isoformat()),
-                    keywords=query_chunk.keywords,
-                    limit=top_k or self.default_top_k,
-                    score_threshold=threshold or self.similarity_threshold
-                )
-                
-                if results:
-                    # Format and rerank results
-                    formatted_results = self._format_results(results)
-                    if formatted_results:
-                        reranked_results = await self.reranker.rerank(
-                            query=query,
-                            results=formatted_results,
-                            top_k=top_k or self.default_top_k
-                        )
-                        
-                        # Add to accumulated results
-                        all_results.extend(reranked_results)
-                        
-                        # Check if we have enough relevant results
-                        if len(reranked_results) >= self.MIN_RELEVANT_RESULTS:
-                            break
+            if results:
+                # Format and rerank results
+                formatted_results = self._format_results(results)
+                if formatted_results:
+                    reranked_results = await self.reranker.rerank(
+                        query=query,
+                        results=formatted_results,
+                        top_k=top_k or self.default_top_k
+                    )
+                    return reranked_results
             
-            return all_results
+            return []
 
         except Exception as e:
             logger.error(f"Search failed: {str(e)}")
@@ -182,7 +166,8 @@ class Retriever:
                 "id": result.get("id", ""),
                 "score": score,
                 "content": content,
-                "metadata": metadata
+                "metadata": metadata,
+                "relevance_explanation": ""  # Add empty relevance explanation field
             })
 
         return formatted

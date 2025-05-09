@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
 from dataclasses import dataclass
 
@@ -15,6 +15,7 @@ class RankedResult:
     content: str
     score: float
     metadata: Dict[str, Any]
+    relevance_explanation: Optional[str] = None
 
 class Reranker:
     def __init__(self):
@@ -27,11 +28,9 @@ class Reranker:
         # Schema for reranking output
         self.reranking_schema = ResponseSchema(
             name="reranked_results",
-            description="List of reranked results with scores",
+            description="List of reranked results with scores and explanations",
             type="list[dict]"
         )
-        
-        self.parser = StructuredOutputParser.from_response_schemas([self.reranking_schema])
         
         self.reranking_prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a Persian news search expert. Rerank and filter the given search results based on their relevance to the query.
@@ -58,6 +57,7 @@ class Reranker:
             
             For each result, return:
             - score: float between 0.0 and 1.0 (0.0 means irrelevant and will be filtered out)
+            - explanation: brief explanation of why this result received its score
             
             {format_instructions}
             """),
@@ -104,7 +104,8 @@ class Reranker:
                         RankedResult(
                             content=original_result["content"],
                             score=score,
-                            metadata=original_result["metadata"]
+                            metadata=original_result["metadata"],
+                            relevance_explanation=rank_info.get("explanation", "")  # Add explanation from reranking
                         )
                     )
             
