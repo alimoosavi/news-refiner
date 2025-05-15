@@ -24,11 +24,11 @@ app.conf.update(
     task_time_limit=config.celery.task_time_limit,
     worker_pool='solo',  # Changed from 'prefork' to 'solo' for macOS compatibility
     beat_schedule={
-        'process-news': {
-            'task': 'news_embedding_pipeline_task.process_news_embeddings',
-            'schedule': timedelta(minutes=1),
-            'kwargs': {'limit': config.processing.batch_size}
-        },
+        # 'process-news': {
+        #     'task': 'news_embedding_pipeline_task.process_news_embeddings',
+        #     'schedule': timedelta(minutes=1),
+        #     'kwargs': {'limit': config.processing.batch_size}
+        # },
         'collect-news': {
             'task': 'news_collector_task.collect_news',
             'schedule': timedelta(minutes=1)
@@ -38,8 +38,8 @@ app.conf.update(
 
 # Import tasks directly instead of using autodiscover
 from news_collector_task import collect_news
-from news_embedding_pipeline_task import process_news_embeddings
+# from news_embedding_pipeline_task import process_news_embeddings
 
 # Register tasks manually
 app.tasks.register(collect_news)
-app.tasks.register(process_news_embeddings)
+# app.tasks.register(process_news_embeddings)

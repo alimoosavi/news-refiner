@@ -82,16 +82,6 @@ class CeleryConfig(BaseSettings):
     task_time_limit: int = Field(300, ge=60, le=3600)
 
 
-class FAISSConfig(BaseSettings):
-    """Vector store configuration"""
-    model_config = SettingsConfigDict(env_prefix="FAISS_")
-
-    index_path: str = Field("news_embeddings.faiss", min_length=3)  # Match .env
-    payload_path: Optional[str] = None
-    index_dim: int = 1536
-    save_interval: int = Field(1000, ge=100, le=10000)
-
-
 class ProcessingConfig(BaseSettings):
     """News processing pipeline configuration"""
     model_config = SettingsConfigDict(env_prefix="PROCESSING_")
@@ -123,6 +113,7 @@ class VectorDatabaseConfig(BaseSettings):
     index_path: str = Field("./faiss_data/news.index", min_length=3)
     metadata_path: str = Field("./faiss_data/news_metadata.pkl", min_length=3)
 
+
 class RerankerConfig(BaseSettings):
     """Reranker configuration"""
     model_config = SettingsConfigDict(env_prefix="RERANKER_")
@@ -132,16 +123,6 @@ class RerankerConfig(BaseSettings):
     max_tokens: int = Field(1000, ge=100, le=4000)
     top_k: int = Field(5, ge=1, le=20)
 
-class Neo4jConfig(BaseSettings):
-    """Neo4j database configuration"""
-    model_config = SettingsConfigDict(env_prefix="NEO4J_")
-
-    uri: str = Field("bolt://localhost:7687", min_length=3)
-    user: str = Field("neo4j", min_length=1)
-    password: str = Field(..., min_length=1)  # Required password
-    database: str = Field("neo4j", min_length=1)
-    max_connection_pool_size: int = Field(50, ge=1, le=1000)
-    connection_timeout: int = Field(30, ge=1, le=300)
 
 class ConfigManager(BaseSettings):
     """Main configuration aggregator"""
@@ -154,11 +135,9 @@ class ConfigManager(BaseSettings):
     collector: CollectorConfig = Field(default_factory=CollectorConfig)
     cache: CacheConfig = Field(default_factory=CacheConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
-    graph_db: Neo4jConfig = Field(default_factory=Neo4jConfig)  # Rename neo4j to graph_db
     crawler: NewsCrawlerConfig = Field(default_factory=NewsCrawlerConfig)
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     celery: CeleryConfig = Field(default_factory=CeleryConfig)
-    faiss: FAISSConfig = Field(default_factory=FAISSConfig)
     vector_db: VectorDatabaseConfig = Field(default_factory=VectorDatabaseConfig)
     processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)

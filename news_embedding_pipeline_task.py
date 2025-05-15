@@ -5,7 +5,6 @@ import os
 from celery_app import app
 from config import config
 from db.db_manager import DBManager
-from graph_database.graph_database import GraphDatabaseManager
 from pipelines.news_embedding_pipeline import NewsProcessingPipeline
 from processors.news_preprocessor import NewsPreprocessor
 from vector_database.vector_database import VectorDatabaseManager
@@ -36,12 +35,6 @@ def process_news_embeddings(self, limit: int = 10):
             embedding_dim=config.openai.embedding_dim
         )
 
-        graph_database_manager = GraphDatabaseManager(
-            uri=config.graph_db.uri,
-            user=config.graph_db.user,
-            password=config.graph_db.password
-        )
-
         preprocessor = NewsPreprocessor(logger)
 
         # Initialize pipeline
@@ -63,8 +56,6 @@ def process_news_embeddings(self, limit: int = 10):
     finally:
         if 'db_manager' in locals():
             db_manager.close_connections()
-        if 'graph_database_manager' in locals():
-            graph_database_manager.close()
 
 
 def start_worker():

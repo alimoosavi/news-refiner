@@ -46,13 +46,9 @@ class NewsProcessingPipeline:
                 return False
 
             # Store chunks in vector database
-            chunk_embeddings = []
-            chunk_ids = []
-            
             for chunk in meaningful_chunks:
                 # Generate embedding
                 embedding = await self.embeddings.aembed_query(chunk.content)
-                chunk_embeddings.append(embedding)
                 
                 # Store in vector database
                 metadata = {
@@ -64,58 +60,16 @@ class NewsProcessingPipeline:
                     "website_link": chunk.website_link
                 }
                 
-                chunk_id = self.vector_db.store(
+                self.vector_db.store(
                     vector=embedding,
                     payload=metadata
                 )
-                chunk_ids.append(chunk_id)
-
-            # Build semantic similarity edges in vector database metadata
-            embeddings_array = np.array(chunk_embeddings)
-            similarities = cosine_similarity(embeddings_array)
-            
-            for i in range(len(chunk_ids)):
-                for j in range(i + 1, len(chunk_ids)):
-                    similarity = similarities[i][j]
-                    if similarity >= self.similarity_threshold:
-                        # Store similarity information in vector database metadata
-                        metadata = {
-                            "related_chunk_id": chunk_ids[j],
-                            "similarity_score": float(similarity)
-                        }
-                        self.vector_db.store(
-                            vector=chunk_embeddings[i],
-                            payload=metadata
-                        )
             
             return True
             
         except Exception as e:
             logger.error(f"Failed to process news {item.id}: {str(e)}")
             return False
-
-    def _get_recent_chunks(
-            self,
-            current_date: datetime,
-            exclude_ids: List[str],
-            limit: int = 100
-    ) -> List[Dict[str, Any]]:
-        """Get recently processed chunks"""
-        start_date = current_date - timedelta(hours=self.temporal_window_hours)
-        
-        # Use vector database's search capabilities to find recent chunks
-        results = self.vector_db.search(
-            query_vector=None,  # No semantic search needed
-            metadata_filters={
-                "published_date": {
-                    "$gte": start_date.isoformat(),
-                    "$lt": current_date.isoformat()
-                }
-            },
-            limit=limit
-        )
-        
-        return [r for r in results if str(r["id"]) not in exclude_ids]
 
     async def run(self, limit: int = 100) -> Dict[str, Any]:
         """Run the pipeline"""

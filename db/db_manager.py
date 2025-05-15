@@ -29,6 +29,8 @@ class RawNews(Base):
         Index('idx_news_published_date', published_date),
         Index('idx_news_published_date_processed', published_date, has_processed,
               postgresql_where=(has_processed == False)),
+        # Add unique constraint for source and published_date combination
+        Index('idx_news_source_published_date_unique', source, published_date, unique=True),
     )
 
 
@@ -170,18 +172,18 @@ class DBManager:
 
     def store_raw_news(self, news_items: List[News]) -> List[int]:
         """
-        Store a batch of raw news items in the database
-
+        Store a batch of raw news items in the database, avoiding duplicates based on source and published_date
+    
         Args:
             news_items: List of News objects containing:
                 - source: str
                 - content: str
                 - published_date: datetime or str (ISO format)
                 - category: str (optional)
-
+    
         Returns:
             List of inserted news IDs
-
+    
         Raises:
             ValueError: If required fields are missing
             SQLAlchemyError: If database operation fails
@@ -189,10 +191,13 @@ class DBManager:
         with self.get_session() as session:
             try:
                 news_objects = []
+                inserted_ids = []
+                duplicates_count = 0
+                
                 for item in news_items:
                     if not all(k in item for k in ['source', 'content', 'published_date']):
                         raise ValueError(f"Missing required fields in news item: {item}")
-
+    
                     # Handle datetime conversion
                     if isinstance(item['published_date'], str):
                         try:
@@ -203,7 +208,18 @@ class DBManager:
                             raise ValueError(f"Invalid published_date format: {item['published_date']}") from e
                     else:
                         published_date = item['published_date']
-
+    
+                    # Check if this news item already exists
+                    existing_news = session.query(RawNews).filter(
+                        RawNews.source == item['source'],
+                        RawNews.published_date == published_date
+                    ).first()
+                    
+                    if existing_news:
+                        # Skip this item as it's a duplicate
+                        duplicates_count += 1
+                        continue
+    
                     news = RawNews(
                         source=item['source'],
                         content=item['content'],
@@ -211,13 +227,18 @@ class DBManager:
                         has_processed=False
                     )
                     news_objects.append(news)
-
-                self.logger.info(f"Inserting {len(news_objects)} news items")
-                session.add_all(news_objects)
-                session.commit()
-
-                return [news.id for news in news_objects]
-
+    
+                if news_objects:
+                    self.logger.info(f"Inserting {len(news_objects)} news items (skipped {duplicates_count} duplicates)")
+                    session.add_all(news_objects)
+                    session.commit()
+                    
+                    inserted_ids = [news.id for news in news_objects]
+                else:
+                    self.logger.info(f"No new items to insert (skipped {duplicates_count} duplicates)")
+    
+                return inserted_ids
+    
             except (ValueError, SQLAlchemyError) as e:
                 session.rollback()
                 self.logger.error(f"Failed to store {len(news_items)} news items: {str(e)}")

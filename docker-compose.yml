@@ -49,23 +49,6 @@ services:
       timeout: 5s
       retries: 5
 
-  neo4j:
-    image: neo4j:5.11.0
-    container_name: news-neo4j
-    restart: unless-stopped
-    ports:
-      - "7474:7474"  # HTTP
-      - "7687:7687"  # Bolt
-    environment:
-      NEO4J_AUTH: neo4j/your_password
-      NEO4J_dbms_memory_pagecache_size: 1G
-      NEO4J_dbms_memory_heap_initial__size: 1G
-      NEO4J_dbms_memory_heap_max__size: 2G
-    volumes:
-      - neo4j_data:/data
-      - neo4j_logs:/logs
-      - neo4j_import:/var/lib/neo4j/import
-      - neo4j_plugins:/plugins
 
 #  celery_worker:
 #     build:
@@ -110,14 +93,6 @@ volumes:
     name: news-redis-data
   qdrant_data:
     name: news-qdrant-data
-  neo4j_data:
-    name: news-neo4j-data
-  neo4j_logs:
-    name: news-neo4j-logs
-  neo4j_import:
-    name: news-neo4j-import
-  neo4j_plugins:
-    name: news-neo4j-plugins
   celery_logs:
     name: news-celery-logs
 

@@ -32,32 +32,48 @@ class Reranker:
             type="list[dict]"
         )
         
+        # Initialize the parser with the schema
+        # Change from direct list to from_response_schemas method
+        self.parser = StructuredOutputParser.from_response_schemas([self.reranking_schema])
+        
         self.reranking_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a Persian news search expert. Rerank and filter the given search results based on their relevance to the query.
+            ("system", """You are a Persian news search expert. Your task is to carefully evaluate and rerank search results based on their relevance to the user's query.
             
-            Follow these rules STRICTLY:
-            1. First, evaluate if each result is actually relevant to the query:
-               - Score 0.0 for completely irrelevant content
-               - Score 0.0 for content that only mentions query terms without meaningful context
-               - Score 0.0 for outdated or superseded information
-               - Only keep results that provide substantial, relevant information
-               
-            2. For relevant results:
-               - Score 0.9-1.0: Perfect match with comprehensive information
-               - Score 0.7-0.8: Good match with significant relevant details
-               - Score 0.4-0.6: Moderate match with some relevant information
-               - Score 0.1-0.3: Minimal relevance or incomplete information
-               - Score 0.0: No meaningful relevance (will be filtered out)
+            FILTERING CRITERIA - First, strictly evaluate each result and filter out irrelevant content:
+            - Score 0.0 for results that are not directly related to the main topic of the query
+            - Score 0.0 for results that only superficially mention query terms without substantive information
+            - Score 0.0 for outdated information that has been superseded by more recent developments
+            - Score 0.0 for content that is misleading or contains factual inaccuracies related to the query
+            - Score 0.0 for content that is too general when the query asks for specific information
             
-            3. Consider these factors for scoring:
-               - Direct relevance to the query topic
-               - Information completeness and depth
-               - Information recency and timeliness
-               - Source credibility and reliability
+            RANKING CRITERIA - For relevant results, assign scores based on these factors:
+            - Score 0.9-1.0: Perfect match that comprehensively addresses the query with authoritative information
+            - Score 0.7-0.8: Strong match with significant relevant details that answers most aspects of the query
+            - Score 0.4-0.6: Moderate match that addresses some aspects of the query with reasonable depth
+            - Score 0.1-0.3: Minimal relevance that touches on the query topic but lacks depth or completeness
             
-            For each result, return:
+            EVALUATION FACTORS - Consider these dimensions when scoring:
+            1. Topical Relevance (40%):
+               - How directly does the content address the specific query topic?
+               - Does it cover the exact subject matter or only tangentially related topics?
+            
+            2. Information Quality (30%):
+               - How comprehensive, accurate and detailed is the information?
+               - Does it provide unique insights or just basic information?
+               - Is the information from a credible source?
+            
+            3. Temporal Relevance (20%):
+               - How recent and timely is the information relative to the query needs?
+               - For current events, newer content should generally score higher
+               - For historical topics, authoritative content may score higher regardless of age
+            
+            4. Content Utility (10%):
+               - How useful would this information be to someone asking this specific query?
+               - Does it provide actionable insights or answer likely follow-up questions?
+            
+            For each result, you MUST return:
             - score: float between 0.0 and 1.0 (0.0 means irrelevant and will be filtered out)
-            - explanation: brief explanation of why this result received its score
+            - explanation: detailed explanation of why this result received its score, referencing specific content elements
             
             {format_instructions}
             """),
