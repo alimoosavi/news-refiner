@@ -1,16 +1,19 @@
 import logging
+
 import time
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_openai import OpenAIEmbeddings
-from vector_database.vector_database import VectorDatabaseManager
-from processors.news_preprocessor import QueryPreprocessor
+
 from config import config
+from processors.news_preprocessor import QueryPreprocessor
+from vector_database.vector_database import VectorDatabaseManager
 
 logger = logging.getLogger(__name__)
 
 from .reranker import Reranker
+
 
 class Retriever:
     # Time windows in days for progressive search
@@ -43,36 +46,53 @@ class Retriever:
             query: str,
             top_k: Optional[int] = None,
             threshold: Optional[float] = None,
-            metadata_filters: Optional[Dict[str, Any]] = None
+            metadata_filters: Optional[Dict[str, Any]] = None,
+            use_keywords: bool = True
     ) -> List[Dict[str, Any]]:
-        """Search using vector database with hybrid search"""
+        """Search using semantic vector search followed by optional keyword filtering"""
         try:
             # Process query and generate embedding
             query_chunk = await self.query_preprocessor.process_query(query)
-            if not query_chunk or not query_chunk.keywords:
-                logger.warning("No valid query chunk or keywords generated")
+            if not query_chunk:
+                logger.warning("No valid query chunk generated")
                 return []
-
+                
             query_embedding = await self.embeddings.aembed_query(query_chunk.content)
             
-            # Perform hybrid search
-            results = self.vector_db.hybrid_search(
+            # Perform pure semantic search
+            results = self.vector_db.search(
                 query_vector=query_embedding,
-                keywords=query_chunk.keywords,
-                limit=top_k or self.default_top_k,
-                score_threshold=threshold or self.similarity_threshold
+                limit=(top_k or self.default_top_k) * 2,  # Get more results for keyword filtering
+                score_threshold=threshold or self.similarity_threshold,
+                metadata_filters=metadata_filters
             )
             
-            if results:
-                # Format and rerank results
-                formatted_results = self._format_results(results)
-                if formatted_results:
-                    reranked_results = await self.reranker.rerank(
-                        query=query,
-                        results=formatted_results,
-                        top_k=top_k or self.default_top_k
-                    )
-                    return reranked_results
+            if not results:
+                return []
+            
+            # Format results first
+            formatted_results = self._format_results(results)
+            
+            # Apply keyword filtering if enabled and keywords exist
+            if use_keywords and query_chunk.keywords:
+                filtered_results = self._filter_by_keywords(formatted_results, query_chunk.keywords)
+                # If keyword filtering returns too few results, fall back to semantic-only
+                if len(filtered_results) < (top_k or self.default_top_k) // 2:
+                    logger.info(f"Keyword filtering returned only {len(filtered_results)} results, using semantic-only")
+                    final_results = formatted_results
+                else:
+                    final_results = filtered_results
+            else:
+                final_results = formatted_results
+            
+            # Rerank the final results
+            if final_results:
+                reranked_results = await self.reranker.rerank(
+                    query=query,
+                    results=final_results,
+                    top_k=top_k or self.default_top_k
+                )
+                return reranked_results
             
             return []
 
@@ -80,17 +100,46 @@ class Retriever:
             logger.error(f"Search failed: {str(e)}")
             return []
 
+    def _filter_by_keywords(self, results: List[Dict[str, Any]], keywords: List[str]) -> List[Dict[str, Any]]:
+        """Filter semantic search results by keyword matching"""
+        filtered_results = []
+        
+        for result in results:
+            content = result.get("content", "").lower()
+            metadata_keywords = result.get("metadata", {}).get("keywords", [])
+            
+            # Check if any query keyword appears in content or metadata keywords
+            keyword_match = False
+            for keyword in keywords:
+                keyword_lower = keyword.lower()
+                # Check in content
+                if keyword_lower in content:
+                    keyword_match = True
+                    break
+                # Check in metadata keywords
+                if any(keyword_lower in meta_kw.lower() for meta_kw in metadata_keywords):
+                    keyword_match = True
+                    break
+            
+            if keyword_match:
+                filtered_results.append(result)
+        
+        logger.info(f"Keyword filtering: {len(results)} -> {len(filtered_results)} results")
+        return filtered_results
+
     async def search_by_date_range(
             self,
             query: str,
             start_date: str,
             end_date: str,
-            top_k: Optional[int] = None
+            top_k: Optional[int] = None,
+            use_keywords: bool = True
     ) -> List[Dict[str, Any]]:
-        """Search within a date range"""
+        """Search within a date range using semantic search + optional keyword filtering"""
         return await self.search(
             query=query,
             top_k=top_k,
+            use_keywords=use_keywords,
             metadata_filters={
                 "published_date": {
                     "$gte": start_date,
@@ -103,12 +152,14 @@ class Retriever:
             self,
             query: str,
             source: str,
-            top_k: Optional[int] = None
+            top_k: Optional[int] = None,
+            use_keywords: bool = True
     ) -> List[Dict[str, Any]]:
-        """Search from a specific source"""
+        """Search from a specific source using semantic search + optional keyword filtering"""
         return await self.search(
             query=query,
             top_k=top_k,
+            use_keywords=use_keywords,
             metadata_filters={"source": source}
         )
 

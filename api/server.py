@@ -65,6 +65,8 @@ class SearchRequest(BaseModel):
     source: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    use_keywords: Optional[bool] = False
+    semantic_only: Optional[bool] = False  # New parameter for pure semantic search
 
 
 class SearchResult(BaseModel):
@@ -108,27 +110,33 @@ class SessionInfoResponse(BaseModel):
 # Search Routes
 @app.post("/search", response_model=SearchResponse)
 async def search(request: SearchRequest) -> SearchResponse:
-    """Search endpoint that performs hybrid search on news articles"""
+    """Search endpoint that performs semantic search with optional keyword filtering"""
     try:
         start_time = datetime.now()
+
+        # Override use_keywords if semantic_only is requested
+        use_keywords = request.use_keywords and not request.semantic_only
 
         if request.source:
             results = await retriever.search_by_source(
                 query=request.query,
                 source=request.source,
-                top_k=request.top_k
+                top_k=request.top_k,
+                use_keywords=use_keywords
             )
         elif request.start_date and request.end_date:
             results = await retriever.search_by_date_range(
                 query=request.query,
                 start_date=request.start_date,
                 end_date=request.end_date,
-                top_k=request.top_k
+                top_k=request.top_k,
+                use_keywords=use_keywords
             )
         else:
             results = await retriever.search(
                 query=request.query,
-                top_k=request.top_k
+                top_k=request.top_k,
+                use_keywords=use_keywords
             )
 
         formatted_results = [

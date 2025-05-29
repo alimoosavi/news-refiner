@@ -21,7 +21,7 @@ class VectorDatabaseManager:
             embedding_dim: int = 1536,
     ):
         self.client = QdrantClient(host=host, port=port)
-        self.collection_name = self.DEFAULT_COLLECTION  # Always use default collection
+        self.collection_name = self.DEFAULT_COLLECTION
         self.embedding_dim = embedding_dim
 
         # Initialize collection
@@ -40,13 +40,7 @@ class VectorDatabaseManager:
                     vectors_config=VectorParams(size=self.embedding_dim, distance=Distance.COSINE)
                 )
 
-                # Create payload indexes
-                self.client.create_payload_index(
-                    collection_name=self.collection_name,
-                    field_name="keywords",
-                    field_schema="keyword"
-                )
-
+                # Create payload indexes for content search (not for hybrid search)
                 self.client.create_payload_index(
                     collection_name=self.collection_name,
                     field_name="content",
@@ -58,40 +52,6 @@ class VectorDatabaseManager:
         except Exception as e:
             logger.error(f"Error initializing Qdrant: {str(e)}")
             raise
-
-    def hybrid_search(
-            self,
-            query_vector: List[float],
-            keywords: List[str],
-            limit: int = 5,
-            score_threshold: float = 0.7
-    ) -> List[Dict[str, Any]]:
-        """Perform hybrid search using both vector similarity and keyword matching"""
-        try:
-            results = self.client.search(
-                collection_name=self.collection_name,
-                query_vector=query_vector,
-                query_filter=models.Filter(
-                    should=[
-                        models.FieldCondition(
-                            key="keywords",
-                            match=models.MatchAny(any=keywords)
-                        )
-                    ]
-                ),
-                limit=limit,
-                score_threshold=score_threshold
-            )
-
-            return [{
-                "id": str(hit.id),
-                "score": hit.score,
-                "payload": hit.payload
-            } for hit in results]
-
-        except Exception as e:
-            logger.error(f"Error during hybrid search: {str(e)}")
-            return []
 
     def _ensure_collection(self, collection_name: str) -> None:
         """
@@ -184,6 +144,7 @@ class VectorDatabaseManager:
             score_threshold: float = 0.7,
             metadata_filters: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
+        """Perform pure semantic search using only vector similarity"""
         try:
             collection = collection_name or self.collection_name
             query_filter = None
